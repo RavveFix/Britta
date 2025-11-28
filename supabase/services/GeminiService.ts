@@ -219,6 +219,7 @@ export interface GeminiResponse {
 export const sendMessageToGemini = async (
     message: string,
     fileData?: FileData,
+    history?: Array<{ role: string, content: string }>,
     apiKey?: string
 ): Promise<GeminiResponse> => {
     try {
@@ -237,11 +238,25 @@ export const sendMessageToGemini = async (
             tools: tools,
         });
 
-        const parts: any[] = [];
+        // Build conversation contents from history
+        const contents = [];
+
+        // Add previous messages from history
+        if (history && history.length > 0) {
+            for (const msg of history) {
+                contents.push({
+                    role: msg.role === 'user' ? 'user' : 'model',
+                    parts: [{ text: msg.content }]
+                });
+            }
+        }
+
+        // Add current message with optional file
+        const currentParts: any[] = [];
 
         // Add file if present
         if (fileData) {
-            parts.push({
+            currentParts.push({
                 inlineData: {
                     mimeType: fileData.mimeType,
                     data: fileData.data,
@@ -250,10 +265,12 @@ export const sendMessageToGemini = async (
         }
 
         // Add text message
-        parts.push({ text: message });
+        currentParts.push({ text: message });
+
+        contents.push({ role: "user", parts: currentParts });
 
         const result = await model.generateContent({
-            contents: [{ role: "user", parts }],
+            contents: contents,
             generationConfig: {
                 temperature: 0.4,
                 maxOutputTokens: 2048,

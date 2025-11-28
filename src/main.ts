@@ -25,14 +25,10 @@ interface Company {
     invoices: any[];
     documents: any[];
     verificationCounter: number;
-    chatHistory: any[];
+    conversationId?: string; // Changed from chatHistory to conversationId
 }
 
-interface ChatMessage {
-    sender: 'user' | 'ai';
-    content: string;
-    timestamp: number;
-}
+
 
 async function initApp() {
     // Initialize Excel Workspace
@@ -59,6 +55,26 @@ async function initApp() {
         window.location.href = '/login.html';
         return;
     }
+
+    // Listen for auth state changes
+    supabase.auth.onAuthStateChange((event, session) => {
+        console.log('Auth state changed:', event, session?.user?.id);
+
+        if (event === 'SIGNED_IN' && session) {
+            // Load conversation when user signs in
+            const currentCompany = getCurrentCompany();
+            if (currentCompany) {
+                console.log('User signed in, loading conversation for company:', currentCompany.id);
+                loadConversationFromDB(currentCompany.id).catch((error: unknown) => {
+                    console.error('Failed to load conversation on sign in:', error);
+                });
+            }
+        } else if (event === 'SIGNED_OUT') {
+            // Clear chat on sign out
+            if (chatContainer) chatContainer.innerHTML = '';
+            window.location.href = '/login.html';
+        }
+    });
 
     // Theme Toggle
     const themeToggle = document.getElementById('theme-toggle');
@@ -107,8 +123,7 @@ async function initApp() {
             history: [],
             invoices: [],
             documents: [],
-            verificationCounter: 1,
-            chatHistory: []
+            verificationCounter: 1
         };
         companies = [defaultCompany];
         currentCompanyId = defaultCompany.id;
@@ -127,14 +142,7 @@ async function initApp() {
     }
 
     // Switch company
-    function switchCompany(companyId: string) {
-        // Save current company's chat before switching
-        const currentCompany = getCurrentCompany();
-        if (currentCompany) {
-            currentCompany.chatHistory = getChatHistory();
-            saveCompanies();
-        }
-
+    async function switchCompany(companyId: string) {
         currentCompanyId = companyId;
         localStorage.setItem('currentCompanyId', companyId);
 
@@ -146,34 +154,58 @@ async function initApp() {
         // renderInvoices();
         // renderDocuments();
 
-        // Load chat history for new company
-        loadChatHistory(company.chatHistory || []);
+        // Load chat history from database for new company
+        await loadConversationFromDB(company.id);
     }
 
-    // Get current chat history from DOM
-    function getChatHistory(): ChatMessage[] {
-        const messages: ChatMessage[] = [];
-        if (!chatContainer) return messages;
-
-        const messageElements = chatContainer.querySelectorAll('.message:not(.welcome-message)');
-
-        messageElements.forEach(msg => {
-            const isUser = msg.classList.contains('user-message');
-            const bubble = msg.querySelector('.bubble');
-            if (bubble) {
-                messages.push({
-                    sender: isUser ? 'user' : 'ai',
-                    content: bubble.innerHTML,
-                    timestamp: Date.now()
-                });
+    // Load conversation from database
+    async function loadConversationFromDB(companyId: string) {
+        try {
+            const { data: { session } } = await supabase.auth.getSession();
+            if (!session) {
+                console.log('No session, clearing chat');
+                if (chatContainer) chatContainer.innerHTML = '';
+                return;
             }
-        });
 
-        return messages;
+            const currentCompany = getCurrentCompany();
+
+            // Get or create conversation for this company
+            const { data: conversationId, error: rpcError } = await supabase.rpc('get_or_create_conversation', {
+                p_user_id: session.user.id,
+                p_company_id: companyId
+            });
+
+            if (rpcError) {
+                console.error('Error getting conversation:', rpcError);
+                return;
+            }
+
+            // Store conversationId in company data
+            currentCompany.conversationId = conversationId;
+            saveCompanies();
+
+            // Load messages from database
+            const { data: messages, error: messagesError } = await supabase
+                .from('messages')
+                .select('*')
+                .eq('conversation_id', conversationId)
+                .order('created_at', { ascending: true });
+
+            if (messagesError) {
+                console.error('Error loading messages:', messagesError);
+                return;
+            }
+
+            // Clear and reload chat UI
+            loadChatHistoryFromMessages(messages || []);
+        } catch (error) {
+            console.error('Error loading conversation from DB:', error);
+        }
     }
 
-    // Load chat history into DOM
-    function loadChatHistory(history: ChatMessage[]) {
+    // Load chat from database messages
+    function loadChatHistoryFromMessages(messages: any[]) {
         if (!chatContainer) return;
 
         // Clear chat
@@ -192,17 +224,17 @@ async function initApp() {
         chatContainer.appendChild(welcomeMsg);
 
         // Load saved messages
-        history.forEach(msg => {
+        messages.forEach(msg => {
             const messageDiv = document.createElement('div');
-            messageDiv.className = `message ${msg.sender === 'user' ? 'user-message' : 'ai-message'}`;
+            messageDiv.className = `message ${msg.role === 'user' ? 'user-message' : 'ai-message'}`;
 
             const avatar = document.createElement('div');
             avatar.className = 'avatar';
-            avatar.textContent = msg.sender === 'user' ? 'Du' : 'B';
+            avatar.textContent = msg.role === 'user' ? 'Du' : 'B';
 
             const bubble = document.createElement('div');
             bubble.className = 'bubble';
-            bubble.innerHTML = msg.content;
+            bubble.innerHTML = markdownToHtml(msg.content);
 
             messageDiv.appendChild(avatar);
             messageDiv.appendChild(bubble);
@@ -212,6 +244,42 @@ async function initApp() {
         // Scroll to bottom
         chatContainer.scrollTop = chatContainer.scrollHeight;
     }
+
+
+
+
+
+    // Get recent chat history from database for API context (last N messages)
+    async function getRecentChatHistory(conversationId: string, maxMessages: number = 20): Promise<Array<{ role: string, content: string }>> {
+        try {
+            // Query messages from database
+            const { data: messages, error } = await supabase
+                .from('messages')
+                .select('role, content')
+                .eq('conversation_id', conversationId)
+                .order('created_at', { ascending: false })
+                .limit(maxMessages);
+
+            if (error) {
+                console.error('Error fetching history for context:', error);
+                return [];
+            }
+
+            // Reverse to get chronological order (oldest to newest)
+            const chronologicalMessages = (messages || []).reverse();
+
+            // Format for Gemini API
+            return chronologicalMessages.map((msg: { role: string, content: string }) => ({
+                role: msg.role === 'user' ? 'user' : 'model',
+                content: msg.content
+            }));
+        } catch (error) {
+            console.error('Error in getRecentChatHistory:', error);
+            return [];
+        }
+    }
+
+
 
     // Create new company
     function createNewCompany() {
@@ -279,8 +347,7 @@ async function initApp() {
                 history: [],
                 invoices: [],
                 documents: [],
-                verificationCounter: 1,
-                chatHistory: []
+                verificationCounter: 1
             };
 
             companies.push(newCompany);
@@ -355,6 +422,14 @@ async function initApp() {
 
     // Initialize company selector
     renderCompanySelector();
+
+    // Load conversation from database for current company
+    const currentCompany = getCurrentCompany();
+    if (currentCompany) {
+        loadConversationFromDB(currentCompany.id).catch((error: unknown) => {
+            console.error('Failed to load initial conversation:', error);
+        });
+    }
 
     // Chat initialization
     const chatForm = document.getElementById('chat-form') as HTMLFormElement;
@@ -546,7 +621,7 @@ async function initApp() {
                 // Show simple confirmation message in chat
                 addMessage(`✅ **Momsredovisning skapad för ${vatReportResponse.data.period}**\n\nRapporten visas till höger. Du kan fortsätta ställa frågor samtidigt som du tittar på rapporten.`, 'ai');
             } else {
-                await sendToGemini(message, fileToSend);
+                await sendToGemini(message, fileToSend, fileUrl);
             }
         });
     }
@@ -709,7 +784,7 @@ async function initApp() {
         }
     }
 
-    async function sendToGemini(message: string, file: File | null) {
+    async function sendToGemini(message: string, file: File | null, fileUrl: string | null = null) {
         try {
             // Show loading state
             const loadingId = 'loading-' + Date.now();
@@ -739,8 +814,44 @@ async function initApp() {
                 };
             }
 
+            // Get current company conversation ID
+            const currentCompany = getCurrentCompany();
+            let conversationId = currentCompany.conversationId;
+
+            // If conversationId is missing, try to get/create it
+            if (!conversationId) {
+                console.log('Conversation ID missing, fetching...');
+                const { data: { session } } = await supabase.auth.getSession();
+                if (session) {
+                    const { data, error } = await supabase.rpc('get_or_create_conversation', {
+                        p_user_id: session.user.id,
+                        p_company_id: currentCompany.id
+                    });
+
+                    if (data) {
+                        conversationId = data;
+                        currentCompany.conversationId = conversationId;
+                        saveCompanies(); // Save to localStorage
+                        console.log('Fetched new conversation ID:', conversationId);
+                    } else if (error) {
+                        console.error('Error fetching conversation ID:', error);
+                    }
+                }
+            }
+
+            // Get recent chat history from database (excluding the current message we just added)
+            const history = conversationId ? await getRecentChatHistory(conversationId, 20) : [];
+
             const { data, error } = await supabase.functions.invoke('gemini-chat', {
-                body: { message, fileData }
+                body: {
+                    message,
+                    fileData,
+                    history,
+                    conversationId,
+                    companyId: currentCompany.id,
+                    fileUrl: fileUrl || null,
+                    fileName: file?.name || null
+                }
             });
 
             // Remove loading indicator

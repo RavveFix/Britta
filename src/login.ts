@@ -1,19 +1,21 @@
 import { createClient } from '@supabase/supabase-js';
+import './landing/styles/landing.css';
+import { logger } from './utils/logger';
 
 // Initialize Supabase client
 const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;
 const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY;
 const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
-console.log('Login script loaded');
+logger.debug('Login script loaded');
 
 async function initLogin() {
-    console.log('initLogin called, DOM readyState:', document.readyState);
+    logger.debug('initLogin called, DOM readyState:', document.readyState);
 
     // Check if already logged in
     const { data: { session } } = await supabase.auth.getSession();
     if (session) {
-        console.log('User already logged in, redirecting to app');
+        logger.info('User already logged in, redirecting to app');
         window.location.href = '/app/';
         return;
     }
@@ -24,26 +26,26 @@ async function initLogin() {
     const messageEl = document.getElementById('message') as HTMLDivElement;
     const submitBtn = document.getElementById('submit-btn') as HTMLButtonElement;
 
-    console.log('Login form element:', loginForm);
-    console.log('Email input:', emailInput);
-    console.log('Message element:', messageEl);
-    console.log('Submit button:', submitBtn);
+    logger.debug('Login form element:', loginForm);
+    logger.debug('Email input:', emailInput);
+    logger.debug('Message element:', messageEl);
+    logger.debug('Submit button:', submitBtn);
 
     if (!loginForm) {
-        console.error('Login form not found!');
+        logger.error('Login form not found!');
         return;
     }
 
     // Handle form submission
     loginForm.addEventListener('submit', async (e) => {
         e.preventDefault();
-        console.log('Login form submitted');
+        logger.debug('Login form submitted');
 
         const email = emailInput.value.trim();
-        console.log('Email:', email);
+        logger.debug('Email:', email);
 
         if (!email) {
-            console.warn('No email entered');
+            logger.warn('No email entered');
             return;
         }
 
@@ -60,7 +62,7 @@ async function initLogin() {
         }
 
         try {
-            console.log('Calling Supabase signInWithOtp...');
+            logger.debug('Calling Supabase signInWithOtp...');
             const { error } = await supabase.auth.signInWithOtp({
                 email,
                 options: {
@@ -69,11 +71,11 @@ async function initLogin() {
             });
 
             if (error) {
-                console.error('Supabase error:', error);
+                logger.error('Supabase error:', error);
                 throw error;
             }
 
-            console.log('Magic link sent successfully');
+            logger.success('Magic link sent successfully');
 
             // Show success message
             if (messageEl) {
@@ -85,7 +87,7 @@ async function initLogin() {
             loginForm.style.display = 'none';
 
         } catch (error: any) {
-            console.error('Login error:', error);
+            logger.error('Login error:', error);
 
             // Show error message
             if (messageEl) {
@@ -101,14 +103,14 @@ async function initLogin() {
         }
     });
 
-    console.log('Login form event listener attached');
+    logger.debug('Login form event listener attached');
 }
 
 // Wait for DOM to be ready
 if (document.readyState === 'loading') {
-    console.log('DOM still loading, waiting for DOMContentLoaded');
+    logger.debug('DOM still loading, waiting for DOMContentLoaded');
     document.addEventListener('DOMContentLoaded', initLogin);
 } else {
-    console.log('DOM already loaded, calling initLogin immediately');
+    logger.debug('DOM already loaded, calling initLogin immediately');
     initLogin();
 }

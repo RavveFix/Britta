@@ -3,6 +3,7 @@
 
 import { sendMessageToGemini, type FileData } from "../../services/GeminiService.ts";
 import { RateLimiterService } from "../../services/RateLimiterService.ts";
+import { ConversationService } from "../../services/ConversationService.ts";
 
 const corsHeaders = {
     "Access-Control-Allow-Origin": "*",
@@ -12,6 +13,11 @@ const corsHeaders = {
 interface RequestBody {
     message: string;
     fileData?: FileData;
+    history?: Array<{ role: string, content: string }>;
+    conversationId?: string;
+    companyId?: string | null;
+    fileUrl?: string | null;
+    fileName?: string | null;
 }
 
 // @ts-expect-error - Deno npm: specifier
@@ -25,7 +31,7 @@ Deno.serve(async (req: Request) => {
     }
 
     try {
-        const { message, fileData }: RequestBody = await req.json();
+        const { message, fileData, history, conversationId, companyId, fileUrl, fileName }: RequestBody = await req.json();
 
         if (!message) {
             return new Response(
@@ -72,8 +78,8 @@ Deno.serve(async (req: Request) => {
 
         console.log('Rate limit check passed:', { userId, remaining: rateLimit.remaining });
 
-        // Call Gemini Service
-        const geminiResponse = await sendMessageToGemini(message, fileData);
+        // Call Gemini Service with history
+        const geminiResponse = await sendMessageToGemini(message, fileData, history);
 
 
         // Handle Tool Calls
@@ -114,11 +120,11 @@ Deno.serve(async (req: Request) => {
                         );
                     case 'get_customers':
                         toolResult = await fortnoxService.getCustomers();
-                        responseText = `Här är dina kunder: ${toolResult.Customers.map((c) => c.Name).join(', ')}`;
+                        responseText = `Här är dina kunder: ${toolResult.Customers.map((c: any) => c.Name).join(', ')}`;
                         break;
                     case 'get_articles':
                         toolResult = await fortnoxService.getArticles();
-                        responseText = `Här är dina artiklar: ${toolResult.Articles.map((a) => a.Description).join(', ')}`;
+                        responseText = `Här är dina artiklar: ${toolResult.Articles.map((a: any) => a.Description).join(', ')}`;
                         break;
 
                     default:
@@ -142,16 +148,55 @@ Deno.serve(async (req: Request) => {
             );
         }
 
+        // Save messages to database if conversationId is provided
+        if (conversationId && userId !== 'anonymous') {
+            try {
+                // Get auth token from request
+                const authHeader = req.headers.get('authorization');
+                const token = authHeader?.replace('Bearer ', '');
+
+                if (token) {
+                    // Create authenticated Supabase client
+                    const supabaseClient = createClient(supabaseUrl, supabaseServiceKey, {
+                        global: { headers: { Authorization: authHeader! } }
+                    });
+
+                    const conversationService = new ConversationService(supabaseClient);
+
+                    // Save user message
+                    await conversationService.addMessage(
+                        conversationId,
+                        'user',
+                        message,
+                        fileUrl || null,
+                        fileName || null
+                    );
+
+                    // Save AI response
+                    if (geminiResponse.text) {
+                        await conversationService.addMessage(
+                            conversationId,
+                            'assistant',
+                            geminiResponse.text
+                        );
+
+                        // Auto-generate title from first message if needed
+                        await conversationService.autoGenerateTitle(conversationId);
+                    }
+                }
+            } catch (saveError) {
+                console.error('Failed to save messages to database:', saveError);
+                // Don't fail the request if saving fails - message still sent successfully
+            }
+        }
+
         // Normal text response
         return new Response(
             JSON.stringify({
                 type: 'text',
                 data: geminiResponse.text
             }),
-            {
-                status: 200,
-                headers: { ...corsHeaders, "Content-Type": "application/json" },
-            }
+            { headers: { ...corsHeaders, "Content-Type": "application/json" } }
         );
     } catch (error) {
         console.error("Edge Function Error:", error);
