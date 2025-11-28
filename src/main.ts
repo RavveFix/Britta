@@ -583,26 +583,46 @@ async function initApp() {
             let vatReportResponse: VATReportResponse | null = null;
 
             // Upload Excel files to Supabase Storage
+            // Excel file handling with intelligent routing
             if (fileToSend && (fileToSend.name.endsWith('.xlsx') || fileToSend.name.endsWith('.xls'))) {
+                console.log('[Router] Detected Excel file, routing to Python API');
+
                 try {
-                    // Upload for Excel viewer
+                    // PRIMARY: Try Python API for precise calculations
+                    vatReportResponse = await analyzeExcelWithPython(fileToSend);
+                    console.log('[Router] Python API succeeded');
+
+                } catch (pythonError) {
+                    // FALLBACK: If Python fails, try Claude
+                    console.warn('[Router] Python API failed, falling back to Claude:', pythonError);
+
+                    try {
+                        vatReportResponse = await analyzeExcelWithClaude(fileToSend);
+                        console.log('[Router] Claude fallback succeeded');
+
+                    } catch (claudeError) {
+                        // Both failed - show error to user
+                        console.error('[Router] Both Python and Claude failed:', claudeError);
+                        const errorMessage = claudeError instanceof Error ? claudeError.message : 'Okänt fel';
+                        addMessage(`❌ Kunde inte analysera Excel-filen. Försök igen eller kontakta support.\n\nFelmeddelande: ${errorMessage}`, 'ai');
+                    }
+                }
+
+                // Upload file to storage (for download/reference) after analysis
+                try {
                     fileUrl = await uploadFileToSupabase(fileToSend);
 
-                    // Analyze with Claude for Swedish VAT report
-                    vatReportResponse = await analyzeExcelWithClaude(fileToSend);
-
-                    // Store report in localStorage
-                    localStorage.setItem('latest_vat_report', JSON.stringify({
-                        ...vatReportResponse,
-                        fileUrl,
-                        filename: fileToSend.name,
-                        analyzedAt: new Date().toISOString()
-                    }));
-
-                } catch (error) {
-                    console.error('Failed to process Excel file:', error);
-                    const errorMessage = error instanceof Error ? error.message : 'Okänt fel';
-                    addMessage(`⚠️ **Kunde inte analysera Excel-filen:**\n\n${errorMessage}\n\nFilen är uppladdad och kan öppnas manuellt.`, 'ai');
+                    // Store report in localStorage if analysis succeeded
+                    if (vatReportResponse) {
+                        localStorage.setItem('latest_vat_report', JSON.stringify({
+                            ...vatReportResponse,
+                            fileUrl,
+                            filename: fileToSend.name,
+                            analyzedAt: new Date().toISOString()
+                        }));
+                    }
+                } catch (uploadError) {
+                    console.warn('[Router] File upload failed (non-critical):', uploadError);
                 }
             }
 
@@ -740,6 +760,47 @@ async function initApp() {
         } catch (error) {
             console.error('File upload error:', error);
             throw error;
+        }
+    }
+
+    /**
+     * Analyze Excel file with Python API for precise VAT calculations.
+     * Falls back to Claude if Python API fails.
+     */
+    async function analyzeExcelWithPython(file: File): Promise<VATReportResponse> {
+        try {
+            console.log('[Python API] Analyzing Excel file:', file.name);
+
+            // Convert file to base64
+            const base64 = await fileToBase64(file);
+            const base64Data = base64.split(',')[1]; // Remove data URL prefix
+
+            // Get current company info
+            const company = getCurrentCompany();
+            const period = new Date().toISOString().slice(0, 7); // YYYY-MM
+
+            // Call python-proxy Edge Function
+            const { data, error } = await supabase.functions.invoke('python-proxy', {
+                body: {
+                    file_data: base64Data,
+                    filename: file.name,
+                    company_name: company?.name || '',
+                    org_number: company?.orgNumber || '',
+                    period: period
+                }
+            });
+
+            if (error) {
+                console.warn('[Python API] Error:', error.message);
+                throw new Error(error.message || 'Python API error');
+            }
+
+            console.log('[Python API] Success:', data);
+            return data as VATReportResponse;
+
+        } catch (error) {
+            console.error('[Python API] Failed:', error);
+            throw error; // Re-throw to trigger fallback
         }
     }
 
