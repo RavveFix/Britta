@@ -436,8 +436,8 @@ class VATProcessor:
             "journal_entries": report.journal_entries,
             "validation": {
                 "is_valid": report.is_valid,
-                "errors": [v for v in report.validations if v["severity"] == "error"],
-                "warnings": [v for v in report.validations if v["severity"] == "warning"]
+                "errors": [f"{v['field']}: {v['message']}" for v in report.validations if v["severity"] == "error"],
+                "warnings": [f"{v['field']}: {v['message']}" for v in report.validations if v["severity"] == "warning"]
             }
         }
 

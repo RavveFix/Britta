@@ -145,6 +145,59 @@ def test_error_handling():
         print(f"❌ Error handling test failed: {e}")
         return False
 
+def test_validation_error():
+    print("\nTesting validation error (invalid org_number)...")
+    try:
+        # Read file data again
+        with open(TEST_FILE, 'rb') as f:
+            file_data = base64.b64encode(f.read()).decode('utf-8')
+
+        payload = {
+            "file_data": file_data,
+            "filename": TEST_FILE,
+            "company_name": "Test AB",
+            "org_number": "123",  # Invalid org number
+            "period": "2024-01"
+        }
+        
+        response = requests.post(
+            f"{BASE_URL}/api/v1/vat/analyze",
+            json=payload,
+            headers={"Content-Type": "application/json"}
+        )
+        
+        if response.status_code == 200:
+            result = response.json()
+            # Check if we got validation errors in the expected format
+            if 'data' in result:
+                data = result['data']
+            else:
+                data = result
+                
+            validation = data.get('validation', {})
+            errors = validation.get('errors', [])
+            
+            if not validation.get('is_valid') and len(errors) > 0:
+                print(f"✅ Validation error correctly reported: {errors[0]}")
+                # Verify it's a string
+                if isinstance(errors[0], str):
+                     print("✅ Error is a string")
+                     return True
+                else:
+                     print(f"❌ Error is not a string: {type(errors[0])}")
+                     return False
+            else:
+                print(f"❌ Expected validation errors but got valid response or no errors: {validation}")
+                return False
+        else:
+            print(f"❌ Validation error test failed with {response.status_code}")
+            print(f"   Response: {response.text}")
+            return False
+            
+    except Exception as e:
+        print(f"❌ Validation error test failed: {e}")
+        return False
+
 if __name__ == "__main__":
     print("=" * 60)
     print("Python API Verification Script")
@@ -153,15 +206,17 @@ if __name__ == "__main__":
     health_ok = test_health()
     analyze_ok, data = test_vat_analyze()
     error_ok = test_error_handling()
+    validation_ok = test_validation_error()
     
     print("\n" + "=" * 60)
     print("Summary:")
     print(f"  Health check: {'✅ PASS' if health_ok else '❌ FAIL'}")
     print(f"  VAT analysis: {'✅ PASS' if analyze_ok else '❌ FAIL'}")
     print(f"  Error handling: {'✅ PASS' if error_ok else '❌ FAIL'}")
+    print(f"  Validation check: {'✅ PASS' if validation_ok else '❌ FAIL'}")
     print("=" * 60)
     
-    if not (health_ok and analyze_ok and error_ok):
+    if not (health_ok and analyze_ok and error_ok and validation_ok):
         sys.exit(1)
     
     print("\n✅ All tests passed!")

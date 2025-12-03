@@ -3,7 +3,7 @@ Pydantic response models that match TypeScript interfaces EXACTLY.
 Must match /Users/ravonstrawder/Desktop/Britta/src/types/vat.ts
 """
 from pydantic import BaseModel
-from typing import List, Optional
+from typing import List, Optional, Union
 
 
 class SalesTransaction(BaseModel):
@@ -39,8 +39,8 @@ class JournalEntry(BaseModel):
 
 class ValidationResult(BaseModel):
     is_valid: bool
-    errors: List[str]
-    warnings: List[str]
+    errors: List[Union[str, dict]]  # Accept both string and dict for compatibility
+    warnings: List[Union[str, dict]]  # Accept both string and dict for compatibility
 
 
 class ChargingSession(BaseModel):

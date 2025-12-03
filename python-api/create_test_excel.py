@@ -6,50 +6,45 @@ from decimal import Decimal
 # Sample EV charging transactions
 transactions = [
     # Sales with 25% VAT
+    # Net: 65.16, VAT: 16.29 -> Gross: 81.45
     {
         "id": "TX001",
-        "amount": 125.00,
-        "subAmount": 100.00,
-        "vat": 25.00,
+        "amount": 81.45,
+        "subAmount": 65.16,
+        "vat": 16.29,
         "vatRate": 25,
         "transactionName": "Elbilsladdning - Station 1",
         "kwh": 20.5
     },
+    # Roaming (0% VAT)
+    # Net: 233.65, VAT: 0 -> Gross: 233.65
     {
         "id": "TX002",
-        "amount": 250.00,
-        "subAmount": 200.00,
-        "vat": 50.00,
-        "vatRate": 25,
-        "transactionName": "Elbilsladdning - Station 2",
-        "kwh": 41.0
-    },
-    # Roaming (0% VAT)
-    {
-        "id": "TX003",
-        "amount": 150.00,
-        "subAmount": 150.00,
+        "amount": 233.65,
+        "subAmount": 233.65,
         "vat": 0.00,
         "vatRate": 0,
         "transactionName": "Roaming intäkter - Hubject",
         "kwh": 30.0
     },
     # Costs (negative amounts)
+    # Cost 1: Net -406.16, VAT -101.54 -> Gross -507.70
     {
-        "id": "TX004",
-        "amount": -50.00,
-        "subAmount": -40.00,
-        "vat": -10.00,
+        "id": "TX003",
+        "amount": -507.70,
+        "subAmount": -406.16,
+        "vat": -101.54,
         "vatRate": 25,
         "transactionName": "Plattformsavgift - Monta",
     },
+    # Cost 2: Net -20.32, VAT 0 -> Gross -20.32
     {
-        "id": "TX005",
-        "amount": -25.00,
-        "subAmount": -20.00,
-        "vat": -5.00,
-        "vatRate": 25,
-        "transactionName": "Abonnemangskostnad",
+        "id": "TX004",
+        "amount": -20.32,
+        "subAmount": -20.32,
+        "vat": 0.00,
+        "vatRate": 0,
+        "transactionName": "Övriga kostnader (momsfri)",
     },
 ]
 
