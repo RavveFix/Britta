@@ -119,18 +119,47 @@ Deno.serve(async (req: Request) => {
   } catch (error) {
     console.error("[python-proxy] Error:", error);
 
-    return new Response(
-      JSON.stringify({
-        error: "internal_server_error",
-        message: error instanceof Error ? error.message : "Unknown error",
-      }),
-      {
-        status: 500,
-        headers: {
-          ...corsHeaders,
-          "Content-Type": "application/json",
-        },
+    // Preserve error details from Python API for better debugging
+    let errorResponse: {
+      error: string;
+      message: string;
+      details?: any;
+      source?: string;
+    };
+
+    if (error instanceof Error) {
+      // Check if error message contains Python API error details
+      const isPythonAPIError = error.message.includes("Python API error");
+
+      errorResponse = {
+        error: isPythonAPIError ? "python_api_error" : "internal_server_error",
+        message: error.message,
+        source: isPythonAPIError ? "python_api" : "edge_function",
+      };
+
+      // Try to extract status code from error message
+      const statusMatch = error.message.match(/\((\d{3})\)/);
+      if (statusMatch) {
+        errorResponse.details = {
+          status_code: parseInt(statusMatch[1]),
+        };
       }
-    );
+    } else {
+      errorResponse = {
+        error: "internal_server_error",
+        message: "Unknown error",
+        source: "edge_function",
+      };
+    }
+
+    console.error("[python-proxy] Error response:", errorResponse);
+
+    return new Response(JSON.stringify(errorResponse), {
+      status: 500,
+      headers: {
+        ...corsHeaders,
+        "Content-Type": "application/json",
+      },
+    });
   }
 });

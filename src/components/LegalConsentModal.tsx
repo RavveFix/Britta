@@ -61,27 +61,54 @@ export function LegalConsentModal({ onAccepted, mode = 'authenticated' }: LegalC
 
                 if (updateError) throw updateError;
 
-                // Send consent confirmation email (non-blocking)
-                try {
-                    console.log('Sending consent confirmation email...');
-                    const { error: emailError } = await supabase.functions.invoke('send-consent-email', {
-                        body: {
-                            userId: user.id,
-                            email: user.email,
-                            fullName: fullName.trim(),
-                            termsVersion: CURRENT_TERMS_VERSION,
-                            acceptedAt: acceptedAt
-                        }
-                    });
+                // Send consent confirmation email with retry logic (non-blocking)
+                const sendEmailWithRetry = async (maxRetries = 3) => {
+                    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+                        try {
+                            console.log(`[Consent Email] Attempt ${attempt}/${maxRetries}...`);
+                            const { error: emailError } = await supabase.functions.invoke('send-consent-email', {
+                                body: {
+                                    userId: user.id,
+                                    email: user.email,
+                                    fullName: fullName.trim(),
+                                    termsVersion: CURRENT_TERMS_VERSION,
+                                    acceptedAt: acceptedAt
+                                }
+                            });
 
-                    if (emailError) {
-                        console.error('Failed to send consent email:', emailError);
-                    } else {
-                        console.log('Consent confirmation email sent successfully');
+                            if (emailError) {
+                                throw emailError;
+                            }
+
+                            console.log('✅ Consent confirmation email sent successfully');
+                            return true;
+                        } catch (emailError: any) {
+                            console.warn(`❌ Email attempt ${attempt}/${maxRetries} failed:`, emailError);
+
+                            // If last attempt, log critical error for admin monitoring
+                            if (attempt === maxRetries) {
+                                console.error('🚨 CRITICAL: Failed to send consent email after all retries', {
+                                    userId: user.id,
+                                    email: user.email,
+                                    error: emailError,
+                                    timestamp: new Date().toISOString()
+                                });
+                                // In production, this should trigger an alert to admins
+                                return false;
+                            }
+
+                            // Wait before retry (exponential backoff: 1s, 2s)
+                            const delayMs = 1000 * Math.pow(2, attempt - 1);
+                            await new Promise(resolve => setTimeout(resolve, delayMs));
+                        }
                     }
-                } catch (emailException) {
-                    console.error('Exception sending consent email:', emailException);
-                }
+                    return false;
+                };
+
+                // Send email asynchronously (don't block user)
+                sendEmailWithRetry().catch(err => {
+                    console.error('Unexpected error in sendEmailWithRetry:', err);
+                });
             }
 
             // For 'local' mode, we just pass the name back
