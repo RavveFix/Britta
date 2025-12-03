@@ -170,23 +170,23 @@ const VATDetails: FunctionComponent<{ vat: VATSummary }> = ({ vat }) => {
         <div class="vat-details">
             <div class="vat-row">
                 <span>Utgående moms 25%:</span>
-                <span>{vat.outgoing_25?.toFixed(2) || '0.00'} SEK</span>
+                <span>{(vat.outgoing_25 ?? 0).toFixed(2)} SEK</span>
             </div>
-            {vat.outgoing_12 && (
+            {(vat.outgoing_12 ?? 0) > 0 && (
                 <div class="vat-row">
                     <span>Utgående moms 12%:</span>
-                    <span>{vat.outgoing_12.toFixed(2)} SEK</span>
+                    <span>{vat.outgoing_12!.toFixed(2)} SEK</span>
                 </div>
             )}
-            {vat.outgoing_6 && (
+            {(vat.outgoing_6 ?? 0) > 0 && (
                 <div class="vat-row">
                     <span>Utgående moms 6%:</span>
-                    <span>{vat.outgoing_6.toFixed(2)} SEK</span>
+                    <span>{vat.outgoing_6!.toFixed(2)} SEK</span>
                 </div>
             )}
             <div class="vat-row">
                 <span>Ingående moms:</span>
-                <span>{vat.incoming?.toFixed(2) || '0.00'} SEK</span>
+                <span>{(vat.incoming ?? 0).toFixed(2)} SEK</span>
             </div>
             <div class="vat-row vat-total">
                 <span>Att {vat.net >= 0 ? 'betala' : 'återfå'}:</span>

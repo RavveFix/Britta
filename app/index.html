@@ -130,6 +130,12 @@
                 <select id="company-select" class="company-dropdown">
                     <!-- Companies populated by JS -->
                 </select>
+                <button id="edit-company-btn" class="icon-btn" title="Redigera bolag">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path>
+                        <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path>
+                    </svg>
+                </button>
                 <button id="add-company-btn" class="icon-btn" title="Lägg till bolag">
                     <svg width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
                         <path d="M12 5v14M5 12h14" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
@@ -366,10 +372,11 @@
         <div id="company-modal" class="modal hidden">
             <div class="modal-content">
                 <div class="modal-header">
-                    <h2>Lägg till nytt bolag</h2>
+                    <h2 id="modal-title">Lägg till nytt bolag</h2>
                     <button id="close-modal-btn" class="close-btn">&times;</button>
                 </div>
                 <form id="company-form">
+                    <input type="hidden" id="company-id" value="">
                     <div class="form-group">
                         <label for="company-name">Företagsnamn *</label>
                         <input type="text" id="company-name" required placeholder="Mitt Företag AB">
@@ -388,7 +395,7 @@
                     </div>
                     <div class="modal-footer">
                         <button type="button" id="cancel-modal-btn" class="secondary-btn">Avbryt</button>
-                        <button type="submit" class="primary-btn">Skapa bolag</button>
+                        <button type="submit" id="submit-btn" class="primary-btn">Skapa bolag</button>
                     </div>
                 </form>
             </div>

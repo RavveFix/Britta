@@ -23,10 +23,29 @@ class ExcelService:
     async def parse_base64_excel(self, file_data: str, filename: str) -> pd.DataFrame:
         """Parse base64 encoded Excel file into DataFrame."""
         try:
-            file_bytes = base64.b64decode(file_data)
+            # Validate base64 string
+            if not file_data:
+                raise FileProcessingError("Empty base64 data received")
+
+            if len(file_data) < 10:
+                raise FileProcessingError(f"Base64 data too short: {len(file_data)} characters")
+
+            logger.info(f"Decoding base64 data: {len(file_data)} characters")
+
+            # Decode base64
+            try:
+                file_bytes = base64.b64decode(file_data, validate=True)
+            except Exception as decode_error:
+                raise FileProcessingError(f"Invalid base64 encoding: {str(decode_error)}")
+
+            logger.info(f"Decoded {len(file_bytes)} bytes, parsing Excel...")
+
+            # Parse Excel
             df = pd.read_excel(io.BytesIO(file_bytes))
             logger.info(f"Parsed Excel: {len(df)} rows, columns: {list(df.columns)}")
             return df
+        except FileProcessingError:
+            raise
         except Exception as e:
             logger.error(f"Error parsing Excel: {str(e)}")
             raise FileProcessingError(f"Failed to parse Excel file: {str(e)}")

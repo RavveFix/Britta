@@ -546,14 +546,54 @@ async function initApp() {
     function createNewCompany() {
         const modal = document.getElementById('company-modal');
         const form = document.getElementById('company-form') as HTMLFormElement;
+        const modalTitle = document.getElementById('modal-title');
+        const submitBtn = document.getElementById('submit-btn');
+        const companyIdInput = document.getElementById('company-id') as HTMLInputElement;
 
         if (!modal || !form) return;
+
+        // Set to create mode
+        if (modalTitle) modalTitle.textContent = 'Lägg till nytt bolag';
+        if (submitBtn) submitBtn.textContent = 'Skapa bolag';
+        if (companyIdInput) companyIdInput.value = '';
+
+        // Clear form
+        form.reset();
 
         // Show modal
         modal.classList.remove('hidden');
 
-        // Clear form
-        form.reset();
+        // Focus first field
+        const nameInput = document.getElementById('company-name');
+        if (nameInput) nameInput.focus();
+    }
+
+    // Edit existing company
+    function editCompany() {
+        const modal = document.getElementById('company-modal');
+        const form = document.getElementById('company-form') as HTMLFormElement;
+        const modalTitle = document.getElementById('modal-title');
+        const submitBtn = document.getElementById('submit-btn');
+        const companyIdInput = document.getElementById('company-id') as HTMLInputElement;
+
+        if (!modal || !form) return;
+
+        const company = getCurrentCompany();
+        if (!company) return;
+
+        // Set to edit mode
+        if (modalTitle) modalTitle.textContent = 'Redigera bolag';
+        if (submitBtn) submitBtn.textContent = 'Spara ändringar';
+        if (companyIdInput) companyIdInput.value = company.id;
+
+        // Populate form with current company data
+        (document.getElementById('company-name') as HTMLInputElement).value = company.name || '';
+        (document.getElementById('org-number') as HTMLInputElement).value = company.orgNumber || '';
+        (document.getElementById('company-address') as HTMLInputElement).value = company.address || '';
+        (document.getElementById('company-phone') as HTMLInputElement).value = company.phone || '';
+
+        // Show modal
+        modal.classList.remove('hidden');
 
         // Focus first field
         const nameInput = document.getElementById('company-name');
@@ -589,6 +629,7 @@ async function initApp() {
         companyForm.addEventListener('submit', (e) => {
             e.preventDefault();
 
+            const companyIdInput = document.getElementById('company-id') as HTMLInputElement;
             const companyName = (document.getElementById('company-name') as HTMLInputElement).value.trim();
             const orgNumber = (document.getElementById('org-number') as HTMLInputElement).value.trim();
             const address = (document.getElementById('company-address') as HTMLInputElement).value.trim();
@@ -599,23 +640,43 @@ async function initApp() {
                 return;
             }
 
-            const newCompany: Company = {
-                id: 'company-' + Date.now(),
-                name: companyName,
-                orgNumber: orgNumber || '',
-                address: address || '',
-                phone: phone || '',
-                history: [],
-                invoices: [],
-                documents: [],
-                verificationCounter: 1
-            };
+            const companyId = companyIdInput?.value;
 
-            companies.push(newCompany);
-            saveCompanies();
-            renderCompanySelector();
-            switchCompany(newCompany.id);
-            closeModal();
+            if (companyId) {
+                // Edit mode - update existing company
+                const companyIndex = companies.findIndex(c => c.id === companyId);
+                if (companyIndex !== -1) {
+                    companies[companyIndex] = {
+                        ...companies[companyIndex],
+                        name: companyName,
+                        orgNumber: orgNumber || '',
+                        address: address || '',
+                        phone: phone || ''
+                    };
+                    saveCompanies();
+                    renderCompanySelector();
+                    closeModal();
+                }
+            } else {
+                // Create mode - add new company
+                const newCompany: Company = {
+                    id: 'company-' + Date.now(),
+                    name: companyName,
+                    orgNumber: orgNumber || '',
+                    address: address || '',
+                    phone: phone || '',
+                    history: [],
+                    invoices: [],
+                    documents: [],
+                    verificationCounter: 1
+                };
+
+                companies.push(newCompany);
+                saveCompanies();
+                renderCompanySelector();
+                switchCompany(newCompany.id);
+                closeModal();
+            }
         });
     }
 
@@ -637,12 +698,19 @@ async function initApp() {
 
     // Company selector event listeners
     const companySelect = document.getElementById('company-select') as HTMLSelectElement;
+    const editCompanyBtn = document.getElementById('edit-company-btn');
     const addCompanyBtn = document.getElementById('add-company-btn');
 
     if (companySelect) {
         companySelect.addEventListener('change', (e) => {
             const target = e.target as HTMLSelectElement;
             switchCompany(target.value);
+        });
+    }
+
+    if (editCompanyBtn) {
+        editCompanyBtn.addEventListener('click', () => {
+            editCompany();
         });
     }
 
@@ -869,6 +937,9 @@ async function initApp() {
             if (fileToSend && (fileToSend.name.endsWith('.xlsx') || fileToSend.name.endsWith('.xls'))) {
                 console.log('[Router] Detected Excel file, routing to Python API');
 
+                // Show analyzing state immediately
+                excelWorkspace.showAnalyzing(fileToSend.name);
+
                 try {
                     // PRIMARY: Try Python API for precise calculations
                     vatReportResponse = await analyzeExcelWithPython(fileToSend);
@@ -1016,7 +1087,24 @@ async function initApp() {
 
             // Convert file to base64
             const base64 = await fileToBase64(file);
-            const base64Data = base64.split(',')[1]; // Remove data URL prefix
+
+            // Validate and extract base64 data
+            if (!base64 || !base64.includes(',')) {
+                throw new Error('Invalid file encoding: missing data URL comma separator');
+            }
+
+            let base64Data = base64.split(',')[1]; // Remove data URL prefix
+
+            if (!base64Data || base64Data.length < 10) {
+                throw new Error(`Invalid base64 data: too short (${base64Data?.length || 0} characters)`);
+            }
+
+            // Ensure proper base64 padding (must be multiple of 4)
+            while (base64Data.length % 4 !== 0) {
+                base64Data += '=';
+            }
+
+            console.log('[Python API] Base64 data length:', base64Data.length);
 
             // Get current company info
             const company = getCurrentCompany();

@@ -1331,6 +1331,7 @@ h1 {
     border-left: 1px solid var(--glass-border);
     display: flex;
     flex-direction: column;
+    min-height: 0;
     transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
     pointer-events: none;
 }
@@ -1445,6 +1446,7 @@ h1 {
 /* Excel Table Container */
 .excel-table-container {
     flex: 1;
+    min-height: 0;
     overflow: auto;
     padding: 1.5rem;
 }
@@ -1520,6 +1522,87 @@ h1 {
 
 .excel-table-container .vat-report-card .card-header {
     padding-top: 0;
+}
+
+/* Excel Analyzing State */
+.excel-analyzing {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 4rem 2rem;
+    text-align: center;
+    min-height: 400px;
+}
+
+.analyzing-spinner {
+    width: 60px;
+    height: 60px;
+    border: 4px solid rgba(0, 240, 255, 0.1);
+    border-top: 4px solid var(--accent-primary);
+    border-radius: 50%;
+    animation: spin 1s linear infinite;
+    margin-bottom: 2rem;
+}
+
+@keyframes spin {
+    0% { transform: rotate(0deg); }
+    100% { transform: rotate(360deg); }
+}
+
+.excel-analyzing h3 {
+    font-size: 1.5rem;
+    font-weight: 600;
+    margin: 0 0 0.5rem 0;
+    background: linear-gradient(135deg, #00F0FF, #7000FF);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+}
+
+.excel-analyzing p {
+    color: var(--text-secondary);
+    margin: 0 0 2rem 0;
+}
+
+.analyzing-steps {
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+    align-items: flex-start;
+    max-width: 300px;
+}
+
+.analyzing-steps .step {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    padding: 0.75rem 1rem;
+    background: rgba(0, 240, 255, 0.05);
+    border: 1px solid rgba(0, 240, 255, 0.1);
+    border-radius: 8px;
+    width: 100%;
+    opacity: 0;
+    animation: fadeInUp 0.5s ease-out forwards;
+}
+
+.analyzing-steps .step:nth-child(1) { animation-delay: 0.2s; }
+.analyzing-steps .step:nth-child(2) { animation-delay: 0.4s; }
+.analyzing-steps .step:nth-child(3) { animation-delay: 0.6s; }
+
+@keyframes fadeInUp {
+    from {
+        opacity: 0;
+        transform: translateY(10px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+.analyzing-steps .step-icon {
+    font-size: 1.5rem;
 }
 
 /* Artifact tabs (for switching between Report and Raw Data) */

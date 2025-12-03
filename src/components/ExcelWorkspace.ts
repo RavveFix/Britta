@@ -240,6 +240,36 @@ export class ExcelWorkspace {
     }
 
     /**
+     * Show analyzing state while processing Excel file
+     *
+     * @param filename - Name of the file being analyzed
+     */
+    showAnalyzing(filename: string): void {
+        // Update panel title
+        this.elements.filenameDisplay.textContent = `Analyserar ${filename}...`;
+
+        // Hide sheet tabs
+        this.elements.tabsContainer.style.display = 'none';
+
+        // Show loading animation
+        this.elements.container.innerHTML = `
+            <div class="excel-analyzing">
+                <div class="analyzing-spinner"></div>
+                <h3>Analyserar momsunderlag</h3>
+                <p>Detta kan ta några sekunder...</p>
+                <div class="analyzing-steps">
+                    <div class="step"><span class="step-icon">📊</span> Läser Excel-data</div>
+                    <div class="step"><span class="step-icon">🔢</span> Beräknar moms</div>
+                    <div class="step"><span class="step-icon">✅</span> Validerar resultat</div>
+                </div>
+            </div>
+        `;
+
+        // Open the panel
+        this.elements.panel.classList.add('open');
+    }
+
+    /**
      * Open and display a VAT report in the panel
      *
      * @param data - VAT report data to display
