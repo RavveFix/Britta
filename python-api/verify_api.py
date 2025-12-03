@@ -3,10 +3,13 @@ import os
 import sys
 import base64
 import json
-from decimal import Decimal
 
-BASE_URL = "http://localhost:8080"
+# Configuration
+BASE_URL = os.getenv("PYTHON_API_URL", "http://localhost:8080")
 TEST_FILE = "test_transactions.xlsx"
+
+# Test constants
+FLOAT_TOLERANCE = 0.02  # SEK tolerance for floating point comparison
 
 # Expected values from user requirement
 EXPECTED_VALUES = {
@@ -89,13 +92,12 @@ def test_vat_analyze():
             print(f"Totala kostnader:   {total_costs:.2f} SEK (expected: {EXPECTED_VALUES['total_costs']:.2f})")
             
             # Check if values match (with small tolerance for floating point)
-            tolerance = 0.02
             checks = {
-                "vat_out_25": abs(actual_vat_out_25 - EXPECTED_VALUES['vat_out_25']) < tolerance,
-                "vat_in": abs(actual_vat_in - EXPECTED_VALUES['vat_in']) < tolerance,
-                "vat_net": abs(actual_vat_net - EXPECTED_VALUES['vat_net']) < tolerance,
-                "total_sales": abs(total_sales - EXPECTED_VALUES['total_sales']) < tolerance,
-                "total_costs": abs(total_costs - EXPECTED_VALUES['total_costs']) < tolerance
+                "vat_out_25": abs(actual_vat_out_25 - EXPECTED_VALUES['vat_out_25']) < FLOAT_TOLERANCE,
+                "vat_in": abs(actual_vat_in - EXPECTED_VALUES['vat_in']) < FLOAT_TOLERANCE,
+                "vat_net": abs(actual_vat_net - EXPECTED_VALUES['vat_net']) < FLOAT_TOLERANCE,
+                "total_sales": abs(total_sales - EXPECTED_VALUES['total_sales']) < FLOAT_TOLERANCE,
+                "total_costs": abs(total_costs - EXPECTED_VALUES['total_costs']) < FLOAT_TOLERANCE
             }
             
             all_match = all(checks.values())
