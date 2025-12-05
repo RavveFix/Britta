@@ -152,31 +152,42 @@ METADATA:
         specificInstructions = `
 DIN UPPGIFT (Elbilsladdning/Monta):
 
-1. **Identifiera kolumner automatiskt:**
-   - Belopp (brutto inkl moms): amount, totalAmount, total, belopp
-   - Netto (exkl moms): subAmount, netAmount, netto
-   - Moms: vat, moms, vatAmount
-   - Momssats: vatRate, momssats (25%, 12%, 6%, 0%)
-   - kWh: kWh, energy, energi
-   - Datum: date, startTime, datum
-   - Roaming: roamingOperator, operator (om ifyllt = 0% moms)
+VIKTIGT - MONTA TRANSAKTIONSLOGIK:
+- **FÖRSÄLJNING (intäkter):** Rader där "amount" är POSITIVT och "to" innehåller "TEAM" (pengar IN till teamet)
+- **KOSTNADER:** Rader där "amount" är NEGATIVT (pengar UT från teamet - avgifter, abonnemang)
+- **reference** som börjar med "CHARGE |" = laddningssession (försäljning)
+- **reference** som innehåller "SUBSCRIPTION" eller "fee" = kostnad
 
-2. **Beräkna svensk moms:**
-   - 25% moms: Privatkunder, företag
-   - 0% moms: OCPI roaming-transaktioner (momsfri export)
-   - Summera per momssats
+MOMS-REGLER FÖR ELBILSLADDNING:
+- Om "roamingOperator" har ett värde (Plugsurfing, Easypark, etc.) → 0% moms (momsfri roaming/export)
+- Om "roamingOperator" är tom OCH amount är positivt → 25% moms (privatkund)
+- Kostnader (negativa belopp): räkna separat som ingående moms
 
-3. **Beräkna elbilsstatistik:**
-   - Total kWh levererad
-   - Antal roaming-transaktioner vs privatkunder
-   - Genomsnittspris per kWh
+1. **Kolumner i Monta-export:**
+   - amount: Bruttobelopp (inkl moms) - POSITIVT = intäkt, NEGATIVT = kostnad
+   - subAmount: Nettobelopp (exkl moms)
+   - vat: Momsbelopp
+   - vatRate: Momssats (25, 0)
+   - kWh: Energi levererad
+   - roamingOperator: Om ifyllt = roaming (0% moms)
+   - reference: Transaktionstyp (CHARGE, SUBSCRIPTION, fee)
+   - from/to: Vem som betalar till vem
 
-4. **BAS-konton för elbilsladdning:**
-   - 3010: Laddning till privatkunder (25% moms)
-   - 3011: Roaming-försäljning momsfri (0% moms, OCPI)
-   - 3740: Öres-avrundning
+2. **Beräkna FÖRSÄLJNING (endast positiva CHARGE-transaktioner):**
+   - Privatkunder (25% moms): CHARGE där roamingOperator är tom
+   - Roaming (0% moms): CHARGE där roamingOperator har värde
+
+3. **Beräkna KOSTNADER (negativa belopp):**
+   - Abonnemang (subscription)
+   - Plattformsavgifter (platform fee)
+   - Operatörsavgifter (operator fee)
+
+4. **BAS-konton:**
+   - 3010: Laddning privatkunder (25% moms)
+   - 3011: Roaming-försäljning (0% moms, momsfri export)
+   - 6590: Övriga externa tjänster (Monta-avgifter)
    - 2611: Utgående moms 25%
-   - 2641: Debiterad ingående moms`;
+   - 2640: Ingående moms`;
 
       } else {
         // ═══════════════════════════════════════════════════════════════
@@ -216,62 +227,99 @@ SVARA MED EXAKT DENNA JSON-STRUKTUR:
   "success": true,
   "period": "YYYY-MM",
   "company_name": "Företagsnamn",
-  "column_mapping": {
-    "amount": "kolumnnamn för brutto",
-    "net_amount": "kolumnnamn för netto",
-    "vat_amount": "kolumnnamn för moms",
-    "vat_rate": "kolumnnamn för momssats",
-    "date": "kolumnnamn för datum",
-    "kwh": "kolumnnamn för kWh (om finns)",
-    "roaming": "kolumnnamn för roaming (om finns)"
-  },
   "summary": {
-    "total_sales": 12345.67,
-    "total_vat": 2469.13,
-    "total_net": 9876.54,
-    "transaction_count": 150,
-    "total_kwh": 1234.56,
-    "avg_price_per_kwh": 3.45,
-    "roaming_count": 45,
-    "private_count": 105
+    "total_sales": 315.10,
+    "total_sales_vat": 16.29,
+    "total_costs": 508.00,
+    "total_costs_vat": 97.60,
+    "result": -192.90,
+    "total_kwh": 56.30,
+    "roaming_sales": 233.65,
+    "private_sales": 81.46,
+    "roaming_count": 4,
+    "private_count": 2
   },
   "vat_breakdown": [
     {
       "rate": 25,
-      "net_amount": 7901.23,
-      "vat_amount": 1975.31,
-      "gross_amount": 9876.54,
-      "transaction_count": 105,
+      "type": "sale",
+      "net_amount": 65.17,
+      "vat_amount": 16.29,
+      "gross_amount": 81.46,
+      "transaction_count": 2,
       "bas_account": "3010",
       "description": "Privatladdning 25% moms"
+    },
+    {
+      "rate": 0,
+      "type": "sale",
+      "net_amount": 233.65,
+      "vat_amount": 0,
+      "gross_amount": 233.65,
+      "transaction_count": 4,
+      "bas_account": "3011",
+      "description": "Roaming-försäljning momsfri (OCPI)"
+    },
+    {
+      "rate": 25,
+      "type": "cost",
+      "net_amount": 390.40,
+      "vat_amount": 97.60,
+      "gross_amount": 488.00,
+      "transaction_count": 2,
+      "bas_account": "6590",
+      "description": "Abonnemang och avgifter"
     }
   ],
   "transactions": [
     {
-      "amount": 125.00,
-      "net_amount": 100.00,
-      "vat_amount": 25.00,
+      "amount": 40.95,
+      "net_amount": 32.76,
+      "vat_amount": 8.19,
       "vat_rate": 25,
-      "description": "Laddning",
+      "description": "Laddning privatkund",
       "date": "2024-01-15",
       "type": "sale",
-      "kwh": 15.5,
+      "kwh": 9.1,
+      "is_roaming": false
+    },
+    {
+      "amount": 65.84,
+      "net_amount": 65.84,
+      "vat_amount": 0,
+      "vat_rate": 0,
+      "description": "Roaming Plugsurfing",
+      "date": "2024-01-15",
+      "type": "sale",
+      "kwh": 13.3,
+      "is_roaming": true
+    },
+    {
+      "amount": -244.00,
+      "net_amount": -195.20,
+      "vat_amount": -48.80,
+      "vat_rate": 25,
+      "description": "Månadsabonnemang",
+      "date": "2024-01-02",
+      "type": "cost",
+      "kwh": 0,
       "is_roaming": false
     }
   ],
   "validation": {
     "passed": true,
     "warnings": [],
-    "notes": "Analysen baserad på data."
+    "notes": "Analysen baserad på Monta-export."
   }
 }
 
-VIKTIGT:
-- Extrahera ALLA ${dataRows.length} transaktioner till "transactions" arrayen
-- Om fler än 200 transaktioner: extrahera alla, men begränsa JSON-storlek genom kortare descriptions
-- Beräkna summary baserat på alla rader
-- Alla belopp i SEK med 2 decimaler
-- Svara ENDAST med JSON, ingen annan text`;
+VIKTIGT - BERÄKNINGSREGLER:
+1. FÖRSÄLJNING = endast rader med POSITIVT amount där reference börjar med "CHARGE"
+2. KOSTNADER = rader med NEGATIVT amount (subscriptions, fees)
+3. Roaming = försäljning där roamingOperator har värde → 0% moms
+4. Privat = försäljning där roamingOperator är tom → 25% moms
+5. Alla belopp i SEK med 2 decimaler
+6. Svara ENDAST med JSON, ingen annan text`;
 
       await sendProgress({
         step: 'calculating',

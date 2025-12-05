@@ -441,22 +441,32 @@ export class ExcelWorkspace {
                     const summary = data.summary as Record<string, unknown> || {};
                     const vatBreakdown = data.vat_breakdown as Array<Record<string, unknown>> || [];
 
-                    // Calculate totals from vat_breakdown
-                    let totalIncome = 0;
+                    // Separate sales and costs from vat_breakdown
+                    const salesItems = vatBreakdown.filter(item => item.type === 'sale' || Number(item.net_amount || 0) >= 0);
+                    const costItems = vatBreakdown.filter(item => item.type === 'cost' || Number(item.net_amount || 0) < 0);
+
+                    // Calculate VAT totals
                     let outgoing25 = 0;
                     let outgoing12 = 0;
                     let outgoing6 = 0;
+                    let incoming = 0;
 
                     for (const item of vatBreakdown) {
                         const rate = Number(item.rate || 0);
-                        const netAmount = Number(item.net_amount || 0);
-                        const vatAmount = Number(item.vat_amount || 0);
-                        totalIncome += netAmount;
+                        const vatAmount = Math.abs(Number(item.vat_amount || 0));
+                        const isCost = item.type === 'cost' || Number(item.net_amount || 0) < 0;
 
-                        if (rate === 25) outgoing25 = vatAmount;
-                        else if (rate === 12) outgoing12 = vatAmount;
-                        else if (rate === 6) outgoing6 = vatAmount;
+                        if (isCost) {
+                            incoming += vatAmount;
+                        } else {
+                            if (rate === 25) outgoing25 += vatAmount;
+                            else if (rate === 12) outgoing12 += vatAmount;
+                            else if (rate === 6) outgoing6 += vatAmount;
+                        }
                     }
+
+                    const totalOutgoing = outgoing25 + outgoing12 + outgoing6;
+                    const netVat = totalOutgoing - incoming;
 
                     // Transform Claude's response to VATReportData format
                     const vatData: VATReportData = {
@@ -467,24 +477,30 @@ export class ExcelWorkspace {
                             org_number: ''
                         },
                         summary: {
-                            total_income: Number(summary.total_net || totalIncome || 0),
-                            total_costs: 0,
-                            result: Number(summary.total_net || totalIncome || 0)
+                            total_income: Number(summary.total_sales || summary.total_net || 0),
+                            total_costs: Math.abs(Number(summary.total_costs || 0)),
+                            result: Number(summary.result || (Number(summary.total_sales || 0) - Math.abs(Number(summary.total_costs || 0))))
                         },
-                        sales: vatBreakdown.map(item => ({
+                        sales: salesItems.map(item => ({
                             description: String(item.description || `${item.rate}% moms`),
                             net: Number(item.net_amount || 0),
                             vat: Number(item.vat_amount || 0),
                             rate: Number(item.rate || 25)
                         })),
-                        costs: [],
+                        costs: costItems.map(item => ({
+                            description: String(item.description || 'Kostnad'),
+                            net: Math.abs(Number(item.net_amount || 0)),
+                            vat: Math.abs(Number(item.vat_amount || 0)),
+                            rate: Number(item.rate || 25)
+                        })),
                         vat: {
                             outgoing_25: outgoing25,
                             outgoing_12: outgoing12,
                             outgoing_6: outgoing6,
-                            incoming: 0,
-                            net: outgoing25 + outgoing12 + outgoing6,
-                            to_pay: outgoing25 + outgoing12 + outgoing6
+                            incoming: incoming,
+                            net: netVat,
+                            to_pay: netVat > 0 ? netVat : 0,
+                            to_refund: netVat < 0 ? Math.abs(netVat) : 0
                         },
                         journal_entries: [],
                         validation: {
@@ -498,7 +514,9 @@ export class ExcelWorkspace {
                             kwh: Number(summary.total_kwh || 0),
                             amount: Number(summary.total_sales || 0),
                             roaming_count: Number(summary.roaming_count || 0),
-                            private_count: Number(summary.private_count || 0)
+                            private_count: Number(summary.private_count || 0),
+                            roaming_sales: Number(summary.roaming_sales || 0),
+                            private_sales: Number(summary.private_sales || 0)
                         }] : undefined
                     };
 
