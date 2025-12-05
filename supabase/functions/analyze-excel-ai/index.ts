@@ -152,42 +152,38 @@ METADATA:
         specificInstructions = `
 DIN UPPGIFT (Elbilsladdning/Monta):
 
-VIKTIGT - MONTA TRANSAKTIONSLOGIK:
-- **FÖRSÄLJNING (intäkter):** Rader där "amount" är POSITIVT och "to" innehåller "TEAM" (pengar IN till teamet)
-- **KOSTNADER:** Rader där "amount" är NEGATIVT (pengar UT från teamet - avgifter, abonnemang)
-- **reference** som börjar med "CHARGE |" = laddningssession (försäljning)
-- **reference** som innehåller "SUBSCRIPTION" eller "fee" = kostnad
+⚠️ KRITISKT - INKLUDERA ALLA TRANSAKTIONER! ⚠️
+Du MÅSTE inkludera VARJE rad i transactions-arrayen. Missa INGA avgifter!
 
-MOMS-REGLER FÖR ELBILSLADDNING:
-- Om "roamingOperator" har ett värde (Plugsurfing, Easypark, etc.) → 0% moms (momsfri roaming/export)
-- Om "roamingOperator" är tom OCH amount är positivt → 25% moms (privatkund)
-- Kostnader (negativa belopp): räkna separat som ingående moms
+MONTA TRANSAKTIONSLOGIK:
+- **FÖRSÄLJNING:** Rader där "amount" är POSITIVT (pengar IN till teamet)
+- **KOSTNADER:** Rader där "amount" är NEGATIVT (pengar UT från teamet)
 
-1. **Kolumner i Monta-export:**
-   - amount: Bruttobelopp (inkl moms) - POSITIVT = intäkt, NEGATIVT = kostnad
-   - subAmount: Nettobelopp (exkl moms)
-   - vat: Momsbelopp
-   - vatRate: Momssats (25, 0)
-   - kWh: Energi levererad
-   - roamingOperator: Om ifyllt = roaming (0% moms)
-   - reference: Transaktionstyp (CHARGE, SUBSCRIPTION, fee)
-   - from/to: Vem som betalar till vem
+ALLA KOSTNADSTYPER SOM MÅSTE INKLUDERAS:
+1. Abonnemang (SUBSCRIPTION_PURCHASE) - stora belopp, 25% moms
+2. Operatörsavgifter (operator fee) - små belopp, 25% moms
+3. Plattformsavgifter (Platform fee) - små belopp, 0% moms (till Monta)
 
-2. **Beräkna FÖRSÄLJNING (endast positiva CHARGE-transaktioner):**
-   - Privatkunder (25% moms): CHARGE där roamingOperator är tom
-   - Roaming (0% moms): CHARGE där roamingOperator har värde
+MOMS-REGLER:
+- Försäljning med roamingOperator → 0% moms (OCPI export)
+- Försäljning utan roamingOperator → 25% moms (privatkund)
+- Kostnader: använd vatRate från datan (25% eller 0%)
 
-3. **Beräkna KOSTNADER (negativa belopp):**
-   - Abonnemang (subscription)
-   - Plattformsavgifter (platform fee)
-   - Operatörsavgifter (operator fee)
+KOLUMNER:
+- amount: Bruttobelopp (POSITIVT = intäkt, NEGATIVT = kostnad)
+- subAmount: Nettobelopp
+- vat: Momsbelopp (kan vara negativt för kostnader)
+- vatRate: Momssats
+- kWh: Energi
+- roamingOperator: Om ifyllt = roaming
+- reference/note: Identifierar transaktionstyp
 
-4. **BAS-konton:**
-   - 3010: Laddning privatkunder (25% moms)
-   - 3011: Roaming-försäljning (0% moms, momsfri export)
-   - 6590: Övriga externa tjänster (Monta-avgifter)
-   - 2611: Utgående moms 25%
-   - 2640: Ingående moms`;
+BAS-KONTON:
+- 3010: Privatladdning (25% moms)
+- 3011: Roaming momsfri (0% moms)
+- 6590: Externa tjänster/avgifter
+- 2611: Utgående moms 25%
+- 2640: Ingående moms`;
 
       } else {
         // ═══════════════════════════════════════════════════════════════
@@ -304,22 +300,45 @@ SVARA MED EXAKT DENNA JSON-STRUKTUR:
       "type": "cost",
       "kwh": 0,
       "is_roaming": false
+    },
+    {
+      "amount": -4.11,
+      "net_amount": -3.29,
+      "vat_amount": -0.82,
+      "vat_rate": 25,
+      "description": "Operatörsavgift",
+      "date": "2024-01-15",
+      "type": "cost",
+      "kwh": 0,
+      "is_roaming": false
+    },
+    {
+      "amount": -5.27,
+      "net_amount": -5.27,
+      "vat_amount": 0,
+      "vat_rate": 0,
+      "description": "Plattformsavgift Monta",
+      "date": "2024-01-15",
+      "type": "cost",
+      "kwh": 0,
+      "is_roaming": false
     }
   ],
   "validation": {
     "passed": true,
     "warnings": [],
-    "notes": "Analysen baserad på Monta-export."
+    "notes": "Alla transaktioner inkluderade."
   }
 }
 
-VIKTIGT - BERÄKNINGSREGLER:
-1. FÖRSÄLJNING = endast rader med POSITIVT amount där reference börjar med "CHARGE"
-2. KOSTNADER = rader med NEGATIVT amount (subscriptions, fees)
-3. Roaming = försäljning där roamingOperator har värde → 0% moms
-4. Privat = försäljning där roamingOperator är tom → 25% moms
-5. Alla belopp i SEK med 2 decimaler
-6. Svara ENDAST med JSON, ingen annan text`;
+⚠️ KRITISKA BERÄKNINGSREGLER - 100% NOGGRANNHET KRÄVS:
+1. INKLUDERA ALLA RADER - varje rad i Excel måste bli en transaktion
+2. FÖRSÄLJNING = POSITIVT amount (intäkter till teamet)
+3. KOSTNADER = NEGATIVT amount (abonnemang, operatörsavgifter, plattformsavgifter)
+4. Roaming = har roamingOperator värde → 0% moms
+5. Använd exakt vat/vatRate från datan - räkna INTE om själv
+6. Alla belopp i SEK, behåll original precision
+7. Svara ENDAST med JSON`;
 
       await sendProgress({
         step: 'calculating',
