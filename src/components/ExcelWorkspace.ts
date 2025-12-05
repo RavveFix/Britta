@@ -437,9 +437,66 @@ export class ExcelWorkspace {
                 };
 
                 if (reportData?.data) {
+                    // Debug: log the full response
+                    console.log('[Britta] Full report data:', JSON.stringify(reportData.data, null, 2));
+
                     const data = reportData.data;
                     const summary = data.summary as Record<string, unknown> || {};
-                    const vatBreakdown = data.vat_breakdown as Array<Record<string, unknown>> || [];
+
+                    // Handle different response formats for vat_breakdown
+                    let vatBreakdown: Array<Record<string, unknown>> = [];
+
+                    // Try different paths where vat_breakdown might be
+                    const possibleBreakdown = data.vat_breakdown || (data as Record<string, unknown>).vatBreakdown;
+
+                    if (Array.isArray(possibleBreakdown)) {
+                        vatBreakdown = possibleBreakdown as Array<Record<string, unknown>>;
+                    } else if (possibleBreakdown && typeof possibleBreakdown === 'object') {
+                        // If it's an object, try to extract values
+                        vatBreakdown = Object.values(possibleBreakdown) as Array<Record<string, unknown>>;
+                    }
+
+                    // If still empty, try to build from summary data
+                    if (vatBreakdown.length === 0 && summary) {
+                        console.log('[Britta] Building VAT breakdown from summary');
+                        // Build basic breakdown from summary if available
+                        if (summary.total_sales_vat || summary.private_sales) {
+                            vatBreakdown.push({
+                                rate: 25,
+                                type: 'sale',
+                                net_amount: Number(summary.private_sales || 0) / 1.25,
+                                vat_amount: Number(summary.total_sales_vat || 0),
+                                gross_amount: Number(summary.private_sales || 0),
+                                bas_account: '3010',
+                                description: 'Privatladdning 25% moms'
+                            });
+                        }
+                        if (summary.roaming_sales) {
+                            vatBreakdown.push({
+                                rate: 0,
+                                type: 'sale',
+                                net_amount: Number(summary.roaming_sales || 0),
+                                vat_amount: 0,
+                                gross_amount: Number(summary.roaming_sales || 0),
+                                bas_account: '3011',
+                                description: 'Roaming-försäljning momsfri'
+                            });
+                        }
+                        if (summary.total_costs) {
+                            vatBreakdown.push({
+                                rate: 25,
+                                type: 'cost',
+                                net_amount: -Math.abs(Number(summary.total_costs || 0)),
+                                vat_amount: -Math.abs(Number(summary.total_costs_vat || 0)),
+                                gross_amount: -Math.abs(Number(summary.total_costs || 0)),
+                                bas_account: '6590',
+                                description: 'Kostnader'
+                            });
+                        }
+                    }
+
+                    console.log('[Britta] VAT breakdown:', vatBreakdown);
+                    console.log('[Britta] Summary:', summary);
 
                     // Separate sales and costs from vat_breakdown
                     const salesItems = vatBreakdown.filter(item => item.type === 'sale' || Number(item.net_amount || 0) >= 0);
