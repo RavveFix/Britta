@@ -6,6 +6,8 @@
 import { getCorsHeaders, createOptionsResponse } from "../../services/CorsService.ts";
 import { createLogger } from "../../services/LoggerService.ts";
 import { RateLimiterService } from "../../services/RateLimiterService.ts";
+import { getRateLimitConfigForPlan, getUserPlan } from "../../services/PlanService.ts";
+import { CompanyMemoryService, buildMemoryPatchFromVatReport } from "../../services/CompanyMemoryService.ts";
 import { ExpensePatternService, PatternSuggestion } from "../../services/ExpensePatternService.ts";
 
 import { createClient } from "npm:@supabase/supabase-js@2";
@@ -371,6 +373,7 @@ function calculateMontaReport(transactions: MontaTransaction[]) {
 }
 
 const logger = createLogger('analyze-excel-ai');
+const RATE_LIMIT_ENDPOINT = 'ai';
 
 // ═══════════════════════════════════════════════════════════════════════════
 // HELPER: Extract supplier/description from row for pattern matching
@@ -740,8 +743,11 @@ Deno.serve(async (req: Request) => {
       }
 
       // Rate limiting
-      const rateLimiter = new RateLimiterService(supabaseAdmin);
-      const rateLimit = await rateLimiter.checkAndIncrement(userId, 'analyze-excel-ai');
+      const plan = await getUserPlan(supabaseAdmin, userId);
+      logger.debug('Resolved plan', { userId, plan });
+
+      const rateLimiter = new RateLimiterService(supabaseAdmin, getRateLimitConfigForPlan(plan));
+      const rateLimit = await rateLimiter.checkAndIncrement(userId, RATE_LIMIT_ENDPOINT);
 
       if (!rateLimit.allowed) {
         throw new Error(`Rate limit exceeded: ${rateLimit.message}`);
@@ -1247,7 +1253,7 @@ Deno.serve(async (req: Request) => {
 
         const { data: conversation, error: conversationError } = await supabaseAdmin
           .from('conversations')
-          .select('id')
+          .select('id, company_id')
           .eq('id', body.conversation_id)
           .eq('user_id', userId)
           .maybeSingle();
@@ -1274,6 +1280,24 @@ Deno.serve(async (req: Request) => {
 
           if (dbError) {
             logger.warn('Failed to save report', { error: dbError.message });
+          } else if (conversation.company_id) {
+            try {
+              const memoryService = new CompanyMemoryService(supabaseAdmin);
+              const patch = buildMemoryPatchFromVatReport(report, {
+                period: (report as { period?: string }).period || body.period || null,
+                companyName: (report as { company_name?: string }).company_name || body.company_name || null,
+                orgNumber: body.org_number || null,
+              });
+
+              if (Object.keys(patch).length > 0) {
+                await memoryService.merge(userId, String(conversation.company_id), patch);
+              }
+            } catch (memoryError) {
+              logger.warn('Failed to update company memory', {
+                error: memoryError instanceof Error ? memoryError.message : String(memoryError),
+                conversationId: body.conversation_id,
+              });
+            }
           }
         }
       }

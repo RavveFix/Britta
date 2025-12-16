@@ -58,6 +58,10 @@ export class AppController {
             if (!hasAccepted) return;
         }
 
+        if (session) {
+            await companyManager.syncWithDatabase(session.user.id);
+        }
+
         // Setup auth state change listener
         this.setupAuthListener();
 
@@ -142,16 +146,18 @@ export class AppController {
     }
 
     private setupAuthListener(): void {
-        supabase.auth.onAuthStateChange((event, session) => {
+        supabase.auth.onAuthStateChange(async (event, session) => {
             logger.info('Auth state changed', { event, userId: session?.user?.id });
 
             if (event === 'SIGNED_IN' && session) {
+                await companyManager.syncWithDatabase(session.user.id);
                 const currentCompany = companyManager.getCurrent();
                 logger.info('User signed in, loading conversation for company', { companyId: currentCompany.id });
                 conversationController.loadFromDB(currentCompany.id).catch((error: unknown) => {
                     logger.error('Failed to load conversation on sign in', error);
                 });
             } else if (event === 'SIGNED_OUT') {
+                companyManager.clearLocalCache();
                 const chatContainer = conversationController.getChatContainer();
                 if (chatContainer) chatContainer.innerHTML = '';
                 window.location.href = '/';

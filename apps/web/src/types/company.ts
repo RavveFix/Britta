@@ -86,12 +86,23 @@ export interface UpdateCompanyInput {
     phone?: string;
 }
 
+function generateCompanyId(): string {
+    try {
+        if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+            return crypto.randomUUID();
+        }
+    } catch {
+        // Ignore and fall back below
+    }
+    return `company-${Date.now()}`;
+}
+
 /**
  * Creates a new company with default values
  */
 export function createEmptyCompany(input: CreateCompanyInput): Company {
     return {
-        id: `company-${Date.now()}`,
+        id: generateCompanyId(),
         name: input.name,
         orgNumber: input.orgNumber,
         address: input.address || '',

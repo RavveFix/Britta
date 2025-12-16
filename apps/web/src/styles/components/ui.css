@@ -180,6 +180,78 @@
     background: var(--glass-border);
 }
 
+/* Rate Limit Banner (429) */
+.rate-limit-banner {
+    position: sticky;
+    top: 0;
+    z-index: 12;
+    display: flex;
+    align-items: flex-start;
+    gap: 0.75rem;
+    padding: 0.9rem 1rem;
+    border-radius: 16px;
+    background: rgba(245, 158, 11, 0.12);
+    border: 1px solid rgba(245, 158, 11, 0.25);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    box-shadow: 0 8px 30px rgba(0, 0, 0, 0.08);
+    align-self: stretch;
+}
+
+.rate-limit-banner__icon {
+    width: 36px;
+    height: 36px;
+    flex-shrink: 0;
+    border-radius: 12px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(245, 158, 11, 0.2);
+    border: 1px solid rgba(245, 158, 11, 0.3);
+    color: #f59e0b;
+    font-weight: 700;
+    font-size: 0.85rem;
+    line-height: 1;
+}
+
+.rate-limit-banner__content {
+    flex: 1;
+    min-width: 0;
+}
+
+.rate-limit-banner__title {
+    color: #f59e0b;
+    font-weight: 600;
+    line-height: 1.25;
+}
+
+.rate-limit-banner__subtitle {
+    margin-top: 0.25rem;
+    color: var(--text-secondary);
+    font-size: 0.9rem;
+    line-height: 1.45;
+}
+
+.rate-limit-banner__close {
+    width: 32px;
+    height: 32px;
+    flex-shrink: 0;
+    border-radius: 10px;
+    border: 1px solid rgba(245, 158, 11, 0.3);
+    background: transparent;
+    cursor: pointer;
+    color: #f59e0b;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    transition: background 0.2s ease, transform 0.2s ease;
+}
+
+.rate-limit-banner__close:hover {
+    background: rgba(245, 158, 11, 0.15);
+    transform: translateY(-1px);
+}
+
 /* Typing Indicator (Animated Dots) */
 .typing-indicator {
     display: flex;

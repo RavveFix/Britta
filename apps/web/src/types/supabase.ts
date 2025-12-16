@@ -18,7 +18,11 @@ export type Database = {
         Row: {
           company_id: string | null
           created_at: string | null
+          daily_count: number
+          daily_reset: string
           endpoint: string
+          hourly_count: number
+          hourly_reset: string
           id: string
           last_reset: string | null
           request_count: number | null
@@ -28,7 +32,11 @@ export type Database = {
         Insert: {
           company_id?: string | null
           created_at?: string | null
+          daily_count?: number
+          daily_reset?: string
           endpoint: string
+          hourly_count?: number
+          hourly_reset?: string
           id?: string
           last_reset?: string | null
           request_count?: number | null
@@ -38,7 +46,11 @@ export type Database = {
         Update: {
           company_id?: string | null
           created_at?: string | null
+          daily_count?: number
+          daily_reset?: string
           endpoint?: string
+          hourly_count?: number
+          hourly_reset?: string
           id?: string
           last_reset?: string | null
           request_count?: number | null
@@ -70,6 +82,39 @@ export type Database = {
           id?: string
           title?: string | null
           updated_at?: string | null
+          user_id?: string
+        }
+        Relationships: []
+      }
+      companies: {
+        Row: {
+          address: string
+          created_at: string
+          id: string
+          name: string
+          org_number: string
+          phone: string
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          address?: string
+          created_at?: string
+          id: string
+          name: string
+          org_number?: string
+          phone?: string
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          address?: string
+          created_at?: string
+          id?: string
+          name?: string
+          org_number?: string
+          phone?: string
+          updated_at?: string
           user_id?: string
         }
         Relationships: []
@@ -181,39 +226,42 @@ export type Database = {
       profiles: {
         Row: {
           avatar_url: string | null
+          consent_email_sent: boolean | null
+          consent_email_sent_at: string | null
           full_name: string | null
           has_accepted_terms: boolean | null
           id: string
+          plan: string
           terms_accepted_at: string | null
           terms_version: string | null
-          consent_email_sent: boolean | null
-          consent_email_sent_at: string | null
           updated_at: string | null
           username: string | null
           website: string | null
         }
         Insert: {
           avatar_url?: string | null
+          consent_email_sent?: boolean | null
+          consent_email_sent_at?: string | null
           full_name?: string | null
           has_accepted_terms?: boolean | null
           id: string
+          plan?: string
           terms_accepted_at?: string | null
           terms_version?: string | null
-          consent_email_sent?: boolean | null
-          consent_email_sent_at?: string | null
           updated_at?: string | null
           username?: string | null
           website?: string | null
         }
         Update: {
           avatar_url?: string | null
+          consent_email_sent?: boolean | null
+          consent_email_sent_at?: string | null
           full_name?: string | null
           has_accepted_terms?: boolean | null
           id?: string
+          plan?: string
           terms_accepted_at?: string | null
           terms_version?: string | null
-          consent_email_sent?: boolean | null
-          consent_email_sent_at?: string | null
           updated_at?: string | null
           username?: string | null
           website?: string | null

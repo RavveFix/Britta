@@ -300,6 +300,15 @@ export class ChatController {
                 await chatService.sendToGemini(message, fileForGemini, fileUrl, vatContext);
                 chatService.dispatchRefresh();
             } catch (error) {
+                const maybeResponse = (error && typeof error === 'object' && 'context' in error)
+                    ? (error as { context?: unknown }).context
+                    : null;
+
+                if (maybeResponse instanceof Response && maybeResponse.status === 429) {
+                    logger.warn('Rate limit reached (429)', { error });
+                    return;
+                }
+
                 logger.error('Failed to send message to Gemini', error);
                 uiController.showError('Kunde inte skicka meddelandet. Kontrollera din anslutning och försök igen.');
                 restoreButton();

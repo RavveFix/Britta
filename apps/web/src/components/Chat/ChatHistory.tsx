@@ -12,6 +12,12 @@ interface ChatHistoryProps {
     conversationId: string | null;
 }
 
+type RateLimitInfo = {
+    remaining: number;
+    resetAt: string | null;
+    message?: string | null;
+};
+
 export const ChatHistory: FunctionComponent<ChatHistoryProps> = ({ conversationId }) => {
     // All hooks must be at the top, before any conditional returns
     const [messages, setMessages] = useState<Message[]>([]);
@@ -21,6 +27,7 @@ export const ChatHistory: FunctionComponent<ChatHistoryProps> = ({ conversationI
     const [isThinking, setIsThinking] = useState(false);
     const [thinkingTimeout, setThinkingTimeout] = useState(false);
     const [errorMessage, setErrorMessage] = useState<string | null>(null);
+    const [rateLimitInfo, setRateLimitInfo] = useState<RateLimitInfo | null>(null);
     const [showScrollButton, setShowScrollButton] = useState(false);
     const bottomRef = useRef<HTMLDivElement>(null);
     const containerRef = useRef<HTMLDivElement>(null);
@@ -171,12 +178,29 @@ export const ChatHistory: FunctionComponent<ChatHistoryProps> = ({ conversationI
         return () => window.removeEventListener('chat-error', handleError as EventListener);
     }, []);
 
+    // Handle rate limit banner (429)
+    useEffect(() => {
+        const handleRateLimit = (e: CustomEvent<RateLimitInfo>) => {
+            setIsThinking(false);
+            setErrorMessage(null);
+            setRateLimitInfo({
+                remaining: typeof e.detail?.remaining === 'number' ? e.detail.remaining : 0,
+                resetAt: typeof e.detail?.resetAt === 'string' ? e.detail.resetAt : null,
+                message: typeof e.detail?.message === 'string' ? e.detail.message : null
+            });
+        };
+
+        window.addEventListener('chat-rate-limit', handleRateLimit as EventListener);
+        return () => window.removeEventListener('chat-rate-limit', handleRateLimit as EventListener);
+    }, []);
+
     // Clear optimistic messages when real messages are fetched (must be before conditional returns)
     useEffect(() => {
         if (messages.length > 0) {
             setOptimisticMessages([]);
             setIsThinking(false);
             setThinkingTimeout(false);
+            setRateLimitInfo(null);
         }
     }, [messages]);
 
@@ -244,6 +268,13 @@ export const ChatHistory: FunctionComponent<ChatHistoryProps> = ({ conversationI
         bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
     };
 
+    const resetTime = (() => {
+        if (!rateLimitInfo?.resetAt) return null;
+        const date = new Date(rateLimitInfo.resetAt);
+        if (Number.isNaN(date.getTime())) return null;
+        return date.toLocaleTimeString('sv-SE', { hour: '2-digit', minute: '2-digit' });
+    })();
+
     return (
         <div
             ref={containerRef}
@@ -251,6 +282,28 @@ export const ChatHistory: FunctionComponent<ChatHistoryProps> = ({ conversationI
             class="chat-list"
         >
             {/* Welcome Message removed - handled by index.html welcome-hero */}
+
+            {rateLimitInfo && (
+                <div class="rate-limit-banner" role="status" aria-live="polite">
+                    <div class="rate-limit-banner__icon" aria-hidden="true">429</div>
+                    <div class="rate-limit-banner__content">
+                        <div class="rate-limit-banner__title">
+                            Du har {rateLimitInfo.remaining} kvar{resetTime ? `, reset kl ${resetTime}` : ''}
+                        </div>
+                        {rateLimitInfo.message && (
+                            <div class="rate-limit-banner__subtitle">{rateLimitInfo.message}</div>
+                        )}
+                    </div>
+                    <button
+                        type="button"
+                        class="rate-limit-banner__close"
+                        aria-label="Stäng"
+                        onClick={() => setRateLimitInfo(null)}
+                    >
+                        ×
+                    </button>
+                </div>
+            )}
 
             {allMessages.map((msg, index) => {
                 const previousMsg = index > 0 ? allMessages[index - 1] : null;

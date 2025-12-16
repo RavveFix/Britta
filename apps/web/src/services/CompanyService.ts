@@ -9,17 +9,37 @@
 
 import type { Company, CreateCompanyInput, UpdateCompanyInput } from '../types/company';
 import { createEmptyCompany } from '../types/company';
+import { supabase } from '../lib/supabase';
 import { logger } from './LoggerService';
 
 const STORAGE_KEYS = {
     COMPANIES: 'companies',
-    CURRENT_COMPANY_ID: 'currentCompanyId'
+    CURRENT_COMPANY_ID: 'currentCompanyId',
+    USER_ID: 'companiesUserId'
 } as const;
 
 class CompanyServiceClass {
     private companies: Company[] = [];
     private currentCompanyId: string | null = null;
     private initialized = false;
+    private dbUserId: string | null = null;
+
+    private normalizeCompany(company: Partial<Company>): Company {
+        return {
+            id: company.id || `company-${Date.now()}`,
+            name: company.name || 'Mitt Företag AB',
+            orgNumber: company.orgNumber || '',
+            address: company.address || '',
+            phone: company.phone || '',
+            history: Array.isArray(company.history) ? company.history : [],
+            invoices: Array.isArray(company.invoices) ? company.invoices : [],
+            documents: Array.isArray(company.documents) ? company.documents : [],
+            verificationCounter: typeof company.verificationCounter === 'number' ? company.verificationCounter : 1,
+            conversationId: company.conversationId,
+            createdAt: company.createdAt || new Date().toISOString(),
+            updatedAt: company.updatedAt || new Date().toISOString()
+        };
+    }
 
     /**
      * Initialize the company manager (load from localStorage)
@@ -53,7 +73,10 @@ class CompanyServiceClass {
     private loadFromStorage(): void {
         try {
             const stored = localStorage.getItem(STORAGE_KEYS.COMPANIES);
-            this.companies = stored ? JSON.parse(stored) : [];
+            const parsed: unknown = stored ? JSON.parse(stored) : [];
+            this.companies = Array.isArray(parsed)
+                ? parsed.map((company) => this.normalizeCompany(company as Partial<Company>))
+                : [];
             this.currentCompanyId = localStorage.getItem(STORAGE_KEYS.CURRENT_COMPANY_ID);
         } catch (e) {
             logger.error('Failed to load companies from storage', e);
@@ -70,6 +93,9 @@ class CompanyServiceClass {
             localStorage.setItem(STORAGE_KEYS.COMPANIES, JSON.stringify(this.companies));
             if (this.currentCompanyId) {
                 localStorage.setItem(STORAGE_KEYS.CURRENT_COMPANY_ID, this.currentCompanyId);
+            }
+            if (this.dbUserId) {
+                localStorage.setItem(STORAGE_KEYS.USER_ID, this.dbUserId);
             }
         } catch (e) {
             logger.error('Failed to save companies to storage', e);
@@ -129,6 +155,7 @@ class CompanyServiceClass {
         this.companies.push(company);
         this.saveToStorage();
         logger.info('Company created', { id: company.id, name: company.name });
+        void this.upsertCompanyToDatabase(company);
         return company;
     }
 
@@ -151,6 +178,7 @@ class CompanyServiceClass {
         this.companies[index] = updated;
         this.saveToStorage();
         logger.info('Company updated', { id, changes: Object.keys(input) });
+        void this.upsertCompanyToDatabase(updated);
         return updated;
     }
 
@@ -179,6 +207,7 @@ class CompanyServiceClass {
 
         this.saveToStorage();
         logger.info('Company deleted', { id });
+        void this.deleteCompanyFromDatabase(id);
         return true;
     }
 
@@ -285,6 +314,217 @@ class CompanyServiceClass {
         } catch (e) {
             logger.error('Failed to import companies', e);
             return false;
+        }
+    }
+
+    clearLocalCache(): void {
+        this.companies = [];
+        this.currentCompanyId = null;
+        this.dbUserId = null;
+        this.initialized = false;
+
+        try {
+            localStorage.removeItem(STORAGE_KEYS.COMPANIES);
+            localStorage.removeItem(STORAGE_KEYS.CURRENT_COMPANY_ID);
+            localStorage.removeItem(STORAGE_KEYS.USER_ID);
+        } catch (e) {
+            logger.error('Failed to clear company cache', e);
+        }
+    }
+
+    private isPlaceholderDefaultCompany(company: Company): boolean {
+        const hasNoData = (company.history?.length ?? 0) === 0
+            && (company.invoices?.length ?? 0) === 0
+            && (company.documents?.length ?? 0) === 0
+            && !company.conversationId
+            && (company.verificationCounter ?? 1) === 1;
+
+        return company.name === 'Mitt Företag AB'
+            && !company.orgNumber
+            && !company.address
+            && !company.phone
+            && hasNoData;
+    }
+
+    private async getAuthenticatedUserId(): Promise<string | null> {
+        if (this.dbUserId) return this.dbUserId;
+
+        const { data: { session } } = await supabase.auth.getSession();
+        this.dbUserId = session?.user?.id ?? null;
+        return this.dbUserId;
+    }
+
+    private async upsertCompanyToDatabase(company: Company): Promise<void> {
+        try {
+            const userId = await this.getAuthenticatedUserId();
+            if (!userId) return;
+
+            const { error } = await supabase
+                .from('companies')
+                .upsert(
+                    {
+                        user_id: userId,
+                        id: company.id,
+                        name: company.name,
+                        org_number: company.orgNumber || '',
+                        address: company.address || '',
+                        phone: company.phone || ''
+                    },
+                    { onConflict: 'user_id,id' }
+                );
+
+            if (error) {
+                logger.error('Failed to upsert company to DB', { companyId: company.id, error });
+            }
+        } catch (e) {
+            logger.error('Exception upserting company to DB', e);
+        }
+    }
+
+    private async deleteCompanyFromDatabase(companyId: string): Promise<void> {
+        try {
+            const userId = await this.getAuthenticatedUserId();
+            if (!userId) return;
+
+            const { error } = await supabase
+                .from('companies')
+                .delete()
+                .eq('user_id', userId)
+                .eq('id', companyId);
+
+            if (error) {
+                logger.error('Failed to delete company from DB', { companyId, error });
+            }
+        } catch (e) {
+            logger.error('Exception deleting company from DB', e);
+        }
+    }
+
+    async syncWithDatabase(userId: string): Promise<void> {
+        this.dbUserId = userId;
+
+        try {
+            const cachedUserId = localStorage.getItem(STORAGE_KEYS.USER_ID);
+            if (cachedUserId && cachedUserId !== userId) {
+                logger.info('User changed, clearing local company cache before sync', { cachedUserId, userId });
+                this.companies = [];
+                this.currentCompanyId = null;
+                localStorage.removeItem(STORAGE_KEYS.COMPANIES);
+                localStorage.removeItem(STORAGE_KEYS.CURRENT_COMPANY_ID);
+            }
+
+            localStorage.setItem(STORAGE_KEYS.USER_ID, userId);
+
+            const { data: dbCompanies, error } = await supabase
+                .from('companies')
+                .select('id, name, org_number, address, phone, created_at, updated_at')
+                .eq('user_id', userId)
+                .order('created_at', { ascending: true });
+
+            if (error) {
+                logger.error('Failed to fetch companies from DB', { error });
+                return;
+            }
+
+            const safeLocalCompanies = this.companies.map((c) => this.normalizeCompany(c));
+            const localById = new Map(safeLocalCompanies.map((company) => [company.id, company]));
+            const dbIds = new Set((dbCompanies || []).map((row) => row.id));
+
+            const mergedCompanies: Company[] = (dbCompanies || []).map((row) => {
+                const local = localById.get(row.id);
+                return {
+                    id: row.id,
+                    name: row.name,
+                    orgNumber: row.org_number || '',
+                    address: row.address || '',
+                    phone: row.phone || '',
+                    history: local?.history || [],
+                    invoices: local?.invoices || [],
+                    documents: local?.documents || [],
+                    verificationCounter: local?.verificationCounter || 1,
+                    conversationId: local?.conversationId,
+                    createdAt: row.created_at || local?.createdAt,
+                    updatedAt: row.updated_at || local?.updatedAt
+                };
+            });
+
+            const localNotInDb = safeLocalCompanies.filter((company) => !dbIds.has(company.id));
+
+            if ((dbCompanies || []).length === 0) {
+                // First-time sync: push local companies up (including the default company).
+                if (safeLocalCompanies.length > 0) {
+                    const rows = safeLocalCompanies.map((company) => ({
+                        user_id: userId,
+                        id: company.id,
+                        name: company.name,
+                        org_number: company.orgNumber || '',
+                        address: company.address || '',
+                        phone: company.phone || ''
+                    }));
+
+                    const { error: upsertError } = await supabase
+                        .from('companies')
+                        .upsert(rows, { onConflict: 'user_id,id' });
+
+                    if (upsertError) {
+                        logger.error('Failed to seed companies to DB from localStorage', { upsertError });
+                    } else {
+                        logger.info('Seeded companies to DB from localStorage', { count: rows.length });
+                    }
+                }
+
+                // Keep local list as-is (already normalized).
+                this.companies = safeLocalCompanies;
+            } else {
+                // DB already has companies: only push meaningful local-only companies (avoid creating a placeholder).
+                const shouldSkipSinglePlaceholder = localNotInDb.length === 1 && this.isPlaceholderDefaultCompany(localNotInDb[0]);
+                const toUpsert = shouldSkipSinglePlaceholder
+                    ? []
+                    : localNotInDb;
+
+                if (toUpsert.length > 0) {
+                    const rows = toUpsert.map((company) => ({
+                        user_id: userId,
+                        id: company.id,
+                        name: company.name,
+                        org_number: company.orgNumber || '',
+                        address: company.address || '',
+                        phone: company.phone || ''
+                    }));
+
+                    const { error: upsertError } = await supabase
+                        .from('companies')
+                        .upsert(rows, { onConflict: 'user_id,id' });
+
+                    if (upsertError) {
+                        logger.error('Failed to upsert local-only companies to DB', { upsertError });
+                    } else {
+                        mergedCompanies.push(...toUpsert);
+                    }
+                }
+
+                this.companies = mergedCompanies;
+            }
+
+            if (this.companies.length === 0) {
+                const fallbackCompany = this.create({
+                    name: 'Mitt Företag AB',
+                    orgNumber: ''
+                });
+                this.companies = [fallbackCompany];
+            }
+
+            if (!this.currentCompanyId || !this.companies.some((company) => company.id === this.currentCompanyId)) {
+                this.currentCompanyId = this.companies[0].id;
+            }
+
+            this.saveToStorage();
+            logger.info('Company sync completed', {
+                companies: this.companies.length,
+                currentCompanyId: this.currentCompanyId
+            });
+        } catch (e) {
+            logger.error('Company sync failed', e);
         }
     }
 }

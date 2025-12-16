@@ -16,10 +16,67 @@ export function SettingsModal({ onClose, onLogout }: SettingsModalProps) {
     const [saving, setSaving] = useState(false);
     const [message, setMessage] = useState<{ type: 'success' | 'error', text: string } | null>(null);
     const [termsVersion, setTermsVersion] = useState<string>('-');
+    const [plan, setPlan] = useState<'free' | 'pro'>('free');
+    const [usage, setUsage] = useState<{
+        hourlyUsed: number;
+        dailyUsed: number;
+        hourlyReset: string | null;
+        dailyReset: string | null;
+    } | null>(null);
+    const [usageError, setUsageError] = useState<string | null>(null);
+
+    const planLimits = plan === 'pro'
+        ? { hourly: 40, daily: 200 }
+        : { hourly: 10, daily: 50 };
 
     useEffect(() => {
         loadData();
     }, []);
+
+    function normalizePlan(value: unknown): 'free' | 'pro' {
+        return value === 'pro' ? 'pro' : 'free';
+    }
+
+    function formatResetAt(resetIso: string | null, windowMs: number): string {
+        if (!resetIso) return '-';
+        const resetAt = new Date(new Date(resetIso).getTime() + windowMs);
+        return resetAt.toLocaleString('sv-SE', { hour: '2-digit', minute: '2-digit' });
+    }
+
+    async function loadUsage(userId: string) {
+        setUsageError(null);
+        try {
+            const { data, error } = await supabase
+                .from('api_usage')
+                .select('hourly_count, daily_count, hourly_reset, daily_reset')
+                .eq('user_id', userId)
+                .eq('endpoint', 'ai')
+                .maybeSingle();
+
+            if (error) throw error;
+
+            if (!data) {
+                setUsage({
+                    hourlyUsed: 0,
+                    dailyUsed: 0,
+                    hourlyReset: null,
+                    dailyReset: null
+                });
+                return;
+            }
+
+            setUsage({
+                hourlyUsed: data.hourly_count ?? 0,
+                dailyUsed: data.daily_count ?? 0,
+                hourlyReset: data.hourly_reset ?? null,
+                dailyReset: data.daily_reset ?? null
+            });
+        } catch (error) {
+            console.error('Error loading usage data:', error);
+            setUsage(null);
+            setUsageError('Kunde inte ladda användning just nu.');
+        }
+    }
 
     async function loadData() {
         try {
@@ -33,7 +90,7 @@ export function SettingsModal({ onClose, onLogout }: SettingsModalProps) {
             // Then get profile
             const { data, error } = await supabase
                 .from('profiles')
-                .select('full_name, terms_version')
+                .select('full_name, terms_version, plan')
                 .eq('id', currentUser.id)
                 .single();
 
@@ -42,7 +99,10 @@ export function SettingsModal({ onClose, onLogout }: SettingsModalProps) {
             if (data) {
                 setFullName(data.full_name || '');
                 setTermsVersion(data.terms_version || '-');
+                setPlan(normalizePlan((data as unknown as { plan?: unknown })?.plan));
             }
+
+            await loadUsage(currentUser.id);
         } catch (error) {
             console.error('Error loading settings data:', error);
             setMessage({ type: 'error', text: 'Kunde inte ladda användardata.' });
@@ -144,6 +204,109 @@ export function SettingsModal({ onClose, onLogout }: SettingsModalProps) {
                     <div style={{ textAlign: 'center', padding: '2rem' }}>Laddar...</div>
                 ) : (
                     <div className="settings-content">
+                        <section style={{ marginBottom: '2rem' }}>
+                            <h3 style={{ fontSize: '1.1rem', marginBottom: '1rem', color: 'var(--text-primary)' }}>Plan & Användning</h3>
+
+                            <div style={{
+                                display: 'flex',
+                                justifyContent: 'space-between',
+                                alignItems: 'center',
+                                marginBottom: '1rem'
+                            }}>
+                                <span style={{ color: 'var(--text-secondary)' }}>Din plan</span>
+                                <span style={{
+                                    background: plan === 'pro'
+                                        ? 'linear-gradient(135deg, var(--accent-primary), var(--accent-secondary))'
+                                        : 'rgba(255, 255, 255, 0.08)',
+                                    padding: '0.2rem 0.6rem',
+                                    borderRadius: '999px',
+                                    fontSize: '0.85rem',
+                                    fontWeight: 700,
+                                    color: plan === 'pro' ? '#fff' : 'var(--text-secondary)',
+                                    border: plan === 'pro' ? 'none' : '1px solid var(--glass-border)'
+                                }}>
+                                    {plan === 'pro' ? 'Pro (199 kr/mån)' : 'Gratis'}
+                                </span>
+                            </div>
+
+                            {usageError ? (
+                                <div style={{
+                                    padding: '0.8rem',
+                                    borderRadius: '8px',
+                                    marginBottom: '1rem',
+                                    background: 'rgba(239, 68, 68, 0.15)',
+                                    color: '#ef4444',
+                                    border: '1px solid rgba(239, 68, 68, 0.3)'
+                                }}>
+                                    {usageError}
+                                </div>
+                            ) : (
+                                <div style={{
+                                    padding: '1rem',
+                                    borderRadius: '12px',
+                                    border: '1px solid var(--glass-border)',
+                                    background: 'rgba(255, 255, 255, 0.04)'
+                                }}>
+                                    <div style={{ marginBottom: '1rem' }}>
+                                        <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.5rem' }}>
+                                            <span style={{ color: 'var(--text-secondary)', fontSize: '0.9rem' }}>Denna timme</span>
+                                            <span style={{ color: 'var(--text-primary)', fontWeight: 600, fontSize: '0.9rem' }}>
+                                                {(usage?.hourlyUsed ?? 0)}/{planLimits.hourly}
+                                            </span>
+                                        </div>
+                                        <div style={{ height: '8px', background: 'rgba(255, 255, 255, 0.08)', borderRadius: '999px', overflow: 'hidden' }}>
+                                            <div style={{
+                                                width: `${Math.min(100, ((usage?.hourlyUsed ?? 0) / planLimits.hourly) * 100)}%`,
+                                                height: '100%',
+                                                background: 'linear-gradient(135deg, var(--accent-primary), var(--accent-secondary))'
+                                            }} />
+                                        </div>
+                                        <div style={{ marginTop: '0.4rem', color: 'var(--text-secondary)', fontSize: '0.8rem' }}>
+                                            Återställs {formatResetAt(usage?.hourlyReset ?? null, 60 * 60 * 1000)}
+                                        </div>
+                                    </div>
+
+                                    <div>
+                                        <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.5rem' }}>
+                                            <span style={{ color: 'var(--text-secondary)', fontSize: '0.9rem' }}>Idag</span>
+                                            <span style={{ color: 'var(--text-primary)', fontWeight: 600, fontSize: '0.9rem' }}>
+                                                {(usage?.dailyUsed ?? 0)}/{planLimits.daily}
+                                            </span>
+                                        </div>
+                                        <div style={{ height: '8px', background: 'rgba(255, 255, 255, 0.08)', borderRadius: '999px', overflow: 'hidden' }}>
+                                            <div style={{
+                                                width: `${Math.min(100, ((usage?.dailyUsed ?? 0) / planLimits.daily) * 100)}%`,
+                                                height: '100%',
+                                                background: 'linear-gradient(135deg, var(--accent-primary), var(--accent-secondary))'
+                                            }} />
+                                        </div>
+                                        <div style={{ marginTop: '0.4rem', color: 'var(--text-secondary)', fontSize: '0.8rem' }}>
+                                            Återställs {formatResetAt(usage?.dailyReset ?? null, 24 * 60 * 60 * 1000)}
+                                        </div>
+                                    </div>
+
+                                    {plan !== 'pro' && (
+                                        <a
+                                            href="mailto:hej@britta.se?subject=Uppgradera%20till%20Pro&body=Hej%2C%0A%0AJag%20skulle%20vilja%20uppgradera%20till%20Pro%20(199%20kr%2Fm%C3%A5n).%0A%0AMvh"
+                                            style={{
+                                                display: 'block',
+                                                marginTop: '1rem',
+                                                padding: '0.75rem 1rem',
+                                                borderRadius: '10px',
+                                                textAlign: 'center',
+                                                textDecoration: 'none',
+                                                fontWeight: 700,
+                                                color: '#fff',
+                                                background: 'linear-gradient(135deg, var(--accent-primary), var(--accent-secondary))'
+                                            }}
+                                        >
+                                            Uppgradera till Pro
+                                        </a>
+                                    )}
+                                </div>
+                            )}
+                        </section>
+
                         <section style={{ marginBottom: '2rem' }}>
                             <h3 style={{ fontSize: '1.1rem', marginBottom: '1rem', color: 'var(--text-primary)' }}>Profil</h3>
                             {user && (

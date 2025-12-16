@@ -14,6 +14,38 @@ import { fileService } from './FileService';
 import { companyManager } from './CompanyService';
 import type { VATReportResponse } from '../types/vat';
 
+type RateLimitEventDetail = {
+    remaining: number;
+    resetAt: string | null;
+    message?: string | null;
+};
+
+function toNumberOrNull(value: unknown): number | null {
+    if (typeof value === 'number' && Number.isFinite(value)) return value;
+    if (typeof value === 'string' && value.trim() !== '') {
+        const parsed = Number(value);
+        if (Number.isFinite(parsed)) return parsed;
+    }
+    return null;
+}
+
+async function extractRateLimitDetail(response: Response): Promise<RateLimitEventDetail> {
+    let remaining = toNumberOrNull(response.headers.get('X-RateLimit-Remaining')) ?? 0;
+    let resetAt = response.headers.get('X-RateLimit-Reset');
+    let message: string | null = null;
+
+    try {
+        const data = await response.clone().json() as Record<string, unknown>;
+        remaining = toNumberOrNull(data.remaining) ?? remaining;
+        resetAt = typeof data.resetAt === 'string' ? data.resetAt : resetAt;
+        message = typeof data.message === 'string' ? data.message : message;
+    } catch {
+        // Ignore parse errors (non-JSON body, etc.)
+    }
+
+    return { remaining, resetAt, message };
+}
+
 export interface ChatMessage {
     role: 'user' | 'assistant';
     content: string;
@@ -140,8 +172,6 @@ class ChatServiceClass {
                 }
             });
 
-            logger.endTimer('gemini-chat');
-
             if (error) {
                 throw error;
             }
@@ -156,15 +186,25 @@ class ChatServiceClass {
 
             return data as GeminiResponse;
         } catch (error) {
-            logger.endTimer('gemini-chat');
             logger.error('Gemini chat error', error);
 
-            // Dispatch error event for UI
+            const maybeResponse = (error && typeof error === 'object' && 'context' in error)
+                ? (error as { context?: unknown }).context
+                : null;
+
+            if (maybeResponse instanceof Response && maybeResponse.status === 429) {
+                const detail = await extractRateLimitDetail(maybeResponse);
+                window.dispatchEvent(new CustomEvent<RateLimitEventDetail>('chat-rate-limit', { detail }));
+                throw error;
+            }
+
             window.dispatchEvent(new CustomEvent('chat-error', {
                 detail: { message: '⚠️ Tyvärr uppstod ett fel. Försök igen senare.' }
             }));
 
             throw error;
+        } finally {
+            logger.endTimer('gemini-chat');
         }
     }
 

@@ -83,12 +83,7 @@ export class RateLimiterService {
 
                 if (insertError) {
                     console.error('Error creating usage record:', insertError);
-                    // Fallback: allow the request even if we can't track it
-                    return {
-                        allowed: true,
-                        remaining: this.config.requestsPerHour - 1,
-                        resetAt: new Date(now.getTime() + oneHourMs)
-                    };
+                    throw new Error('Rate limit tracking failed');
                 }
 
                 return {
@@ -144,7 +139,7 @@ export class RateLimiterService {
             }
 
             // Update record with new counts
-            await this.supabase
+            const { error: updateError } = await this.supabase
                 .from('api_usage')
                 .update({
                     hourly_count: newHourlyCount,
@@ -157,6 +152,11 @@ export class RateLimiterService {
                 })
                 .eq('user_id', userId)
                 .eq('endpoint', endpoint);
+
+            if (updateError) {
+                console.error('Error updating usage record:', updateError);
+                throw new Error('Rate limit tracking failed');
+            }
 
             // Calculate remaining requests (use the more restrictive limit)
             const remainingHourly = this.config.requestsPerHour - newHourlyCount;
@@ -176,12 +176,7 @@ export class RateLimiterService {
 
         } catch (error) {
             console.error('Rate limiter error:', error);
-            // Fail open: allow the request if rate limiting fails
-            return {
-                allowed: true,
-                remaining: this.config.requestsPerHour,
-                resetAt: new Date(now.getTime() + 60 * 60 * 1000)
-            };
+            throw new Error('Rate limiting unavailable');
         }
     }
 

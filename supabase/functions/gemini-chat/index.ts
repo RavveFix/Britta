@@ -4,6 +4,8 @@
 import { sendMessageToGemini, type FileData } from "../../services/GeminiService.ts";
 import { sendMessageToOpenAI } from "../../services/OpenAIService.ts";
 import { RateLimiterService } from "../../services/RateLimiterService.ts";
+import { CompanyMemoryService, type CompanyMemory } from "../../services/CompanyMemoryService.ts";
+import { getRateLimitConfigForPlan, getUserPlan } from "../../services/PlanService.ts";
 import { ConversationService } from "../../services/ConversationService.ts";
 import { getCorsHeaders, createOptionsResponse } from "../../services/CorsService.ts";
 import { createLogger } from "../../services/LoggerService.ts";
@@ -12,6 +14,49 @@ import { createClient } from "npm:@supabase/supabase-js@2";
 import { FortnoxService } from "../../services/FortnoxService.ts";
 
 const logger = createLogger('gemini-chat');
+const RATE_LIMIT_ENDPOINT = 'ai';
+
+function truncateText(value: string, maxChars: number): string {
+    const trimmed = value.trim();
+    if (trimmed.length <= maxChars) return trimmed;
+    return `${trimmed.slice(0, maxChars)}…`;
+}
+
+function formatSek(value: number | null | undefined): string {
+    if (typeof value !== 'number' || !Number.isFinite(value)) return '—';
+    return new Intl.NumberFormat('sv-SE', { maximumFractionDigits: 0 }).format(value);
+}
+
+function buildCompanyMemoryContext(memory: CompanyMemory, includeVat: boolean): string | null {
+    const lines: string[] = [];
+
+    const companyBits: string[] = [];
+    if (memory.company_name) companyBits.push(memory.company_name);
+    if (memory.org_number) companyBits.push(memory.org_number);
+    if (companyBits.length > 0) {
+        lines.push(`Bolag: ${companyBits.join(' • ')}`);
+    }
+
+    if (includeVat && memory.last_vat_report) {
+        const vat = memory.last_vat_report;
+        const period = vat.period || 'okänd period';
+        const netVat = vat.net_vat;
+        const direction = typeof netVat === 'number' ? (netVat >= 0 ? 'betala' : 'återfå') : null;
+        const absNet = typeof netVat === 'number' ? Math.abs(netVat) : null;
+
+        lines.push(
+            `Senaste momsrapport: ${period} — moms att ${direction ?? 'hantera'}: ${formatSek(absNet)} SEK (utgående ${formatSek(vat.outgoing_vat)} / ingående ${formatSek(vat.incoming_vat)})`
+        );
+    }
+
+    if (memory.notes) {
+        lines.push(`Noteringar: ${truncateText(memory.notes, 800)}`);
+    }
+
+    if (lines.length === 0) return null;
+
+    return `SYSTEM CONTEXT: Företagsminne för detta bolag (gäller bara detta bolag):\n- ${lines.join('\n- ')}`;
+}
 
 interface RequestBody {
     message: string;
@@ -88,10 +133,14 @@ Deno.serve(async (req: Request) => {
             );
         }
         const userId = user.id;
+        let resolvedCompanyId: string | null = typeof companyId === 'string' && companyId.trim() ? companyId.trim() : null;
 
         // Check rate limit
-        const rateLimiter = new RateLimiterService(supabaseAdmin);
-        const rateLimit = await rateLimiter.checkAndIncrement(userId, 'gemini-chat');
+        const plan = await getUserPlan(supabaseAdmin, userId);
+        logger.debug('Resolved plan', { userId, plan });
+
+        const rateLimiter = new RateLimiterService(supabaseAdmin, getRateLimitConfigForPlan(plan));
+        const rateLimit = await rateLimiter.checkAndIncrement(userId, RATE_LIMIT_ENDPOINT);
 
         if (!rateLimit.allowed) {
             logger.warn('Rate limit exceeded', { userId });
@@ -121,7 +170,7 @@ Deno.serve(async (req: Request) => {
         if (conversationId) {
             const { data: conversation, error: conversationError } = await supabaseAdmin
                 .from('conversations')
-                .select('id')
+                .select('id, company_id')
                 .eq('id', conversationId)
                 .eq('user_id', userId)
                 .maybeSingle();
@@ -145,6 +194,10 @@ Deno.serve(async (req: Request) => {
                         headers: { ...corsHeaders, "Content-Type": "application/json" },
                     }
                 );
+            }
+
+            if (conversation.company_id) {
+                resolvedCompanyId = String(conversation.company_id);
             }
         }
 
@@ -262,6 +315,26 @@ ANVÄNDARFRÅGA:
                 ? `${safeDocumentText.slice(0, MAX_DOC_CHARS)}\n\n[...trunkerad...]`
                 : safeDocumentText;
             finalMessage = `DOKUMENTKONTEXT (text-utdrag från bifogat dokument):\n\n${truncated}\n\n${finalMessage}`;
+        }
+
+        if (resolvedCompanyId) {
+            try {
+                const memoryService = new CompanyMemoryService(supabaseAdmin);
+                const memory = await memoryService.get(userId, resolvedCompanyId);
+                const memoryContext = memory
+                    ? buildCompanyMemoryContext(memory, !vatReportContext)
+                    : null;
+
+                if (memoryContext) {
+                    finalMessage = `${memoryContext}\n\n${finalMessage}`;
+                }
+            } catch (memoryError) {
+                logger.warn('Failed to load company memory', {
+                    error: memoryError instanceof Error ? memoryError.message : String(memoryError),
+                    userId,
+                    companyId: resolvedCompanyId,
+                });
+            }
         }
 
         // Provider switch (default: Gemini). When OpenAI is selected, we do NOT fall back silently.
@@ -453,7 +526,8 @@ ANVÄNDARFRÅGA:
 
         return new Response(
             JSON.stringify({
-                error: error instanceof Error ? error.message : "Internal server error"
+                error: 'internal_server_error',
+                message: 'Internal server error'
             }),
             {
                 status: 500,

@@ -1,6 +1,6 @@
 /// <reference path="../../types/deno.d.ts" />
 
-import { createClient } from "@supabase/supabase-js";
+import { createClient } from "npm:@supabase/supabase-js@2";
 import { FortnoxService } from "../../services/FortnoxService.ts";
 import { FortnoxInvoice } from "./types.ts";
 import { getCorsHeaders, createOptionsResponse } from "../../services/CorsService.ts";
