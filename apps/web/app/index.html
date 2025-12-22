@@ -51,8 +51,8 @@
                         width: 48px;
                         height: 48px;
                         border-radius: 50%;
-                        background: radial-gradient(circle at 30% 30%, rgba(255, 255, 255, 0.95) 0%, #a5b4fc 25%, #6366f1 50%, #4f46e5 100%);
-                        box-shadow: 0 0 20px rgba(99, 102, 241, 0.4), inset -5px -5px 15px rgba(0, 0, 0, 0.1), inset 5px 5px 15px rgba(255, 255, 255, 0.4);
+                        background: radial-gradient(circle at 30% 25%, var(--orb-highlight) 0%, var(--orb-mid) 45%, var(--orb-shadow) 100%);
+                        box-shadow: inset 0 0 0 1px var(--orb-edge);
                         animation: loader-pulse 2s ease-in-out infinite;
                     }
 
@@ -61,11 +61,11 @@
                         0%,
                         100% {
                             transform: scale(1);
-                            opacity: 0.8;
+                            opacity: 0.85;
                         }
 
                         50% {
-                            transform: scale(1.1);
+                            transform: scale(1.04);
                             opacity: 1;
                         }
                     }

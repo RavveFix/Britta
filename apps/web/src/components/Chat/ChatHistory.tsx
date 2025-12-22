@@ -344,7 +344,7 @@ export const ChatHistory: FunctionComponent<ChatHistoryProps> = ({ conversationI
 
             {isThinking && (
                 <div class="message ai-message thinking-message">
-                    <div class="britta-orb" style={{ width: '32px', height: '32px', margin: '4px' }}></div>
+                    <div class="britta-orb thinking" style={{ width: '32px', height: '32px', margin: '4px' }}></div>
                     <div class="bubble thinking-bubble">
                         {thinkingTimeout ? (
                             <div class="thinking-timeout">
