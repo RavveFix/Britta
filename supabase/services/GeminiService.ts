@@ -17,7 +17,17 @@ Du kan läsa och analysera uppladdade dokument (PDF, bilder) som fakturor, kvitt
 2. **Agera**: Använd tillgängliga verktyg (tools) för att hämta data eller utföra åtgärder i Fortnox.
 3. **Svara**: Ge ett tydligt och trevligt svar på svenska baserat på resultatet.
 
+## Minne och kontext:
+Du har tillgång till användarens tidigare konversationer. Använd proaktivt:
+- **conversation_search**: När användaren refererar till något ni pratat om förut, eller när tidigare kontext kan vara relevant
+- **recent_chats**: När du behöver överblick av senaste konversationer
+
+Var proaktiv - sök i historiken om du misstänker att relevant information finns där.
+Nämn aldrig att du "söker" eller "letar" - presentera informationen naturligt.
+
 ## Verktyg (Tools):
+- **conversation_search**: Söker i användarens tidigare konversationer. Använd när något verkar referera till tidigare diskussioner.
+- **recent_chats**: Hämtar de senaste konversationerna för att få överblick.
 - **create_invoice**: Skapar ett fakturautkast i Fortnox. Kräver kundnummer och artiklar.
 - **get_customers**: Hämtar en lista på kunder från Fortnox. Returnerar namn och kundnummer.
 - **get_articles**: Hämtar en lista på artiklar från Fortnox. Returnerar beskrivning, artikelnummer och pris.
@@ -152,6 +162,33 @@ const tools: Tool[] = [
     {
         functionDeclarations: [
             {
+                name: "conversation_search",
+                description: "Söker i användarens tidigare konversationer för att hitta relevant kontext. Använd proaktivt när användaren refererar till tidigare diskussioner, eller när historisk information kan vara användbar.",
+                parameters: {
+                    type: SchemaType.OBJECT,
+                    properties: {
+                        query: {
+                            type: SchemaType.STRING,
+                            description: "Sökfråga - vad du letar efter i tidigare konversationer (t.ex. 'moms Q3', 'faktura till Acme')"
+                        }
+                    },
+                    required: ["query"]
+                }
+            },
+            {
+                name: "recent_chats",
+                description: "Hämtar de senaste konversationerna för att få överblick över vad användaren pratat om nyligen. Använd när du behöver kontext eller överblick.",
+                parameters: {
+                    type: SchemaType.OBJECT,
+                    properties: {
+                        limit: {
+                            type: SchemaType.NUMBER,
+                            description: "Antal konversationer att hämta (max 10, standard 5)"
+                        }
+                    }
+                }
+            },
+            {
                 name: "create_invoice",
                 description: "Skapar ett fakturautkast i Fortnox. Använd detta när användaren vill fakturera.",
                 parameters: {
@@ -222,7 +259,19 @@ export type CreateInvoiceArgs = {
     [key: string]: unknown;
 };
 
+export type ConversationSearchArgs = {
+    query: string;
+    [key: string]: unknown;
+};
+
+export type RecentChatsArgs = {
+    limit?: number;
+    [key: string]: unknown;
+};
+
 export type ToolCall =
+    | { tool: 'conversation_search'; args: ConversationSearchArgs }
+    | { tool: 'recent_chats'; args: RecentChatsArgs }
     | { tool: 'create_invoice'; args: CreateInvoiceArgs }
     | { tool: 'get_customers'; args: Record<string, never> }
     | { tool: 'get_articles'; args: Record<string, never> };
@@ -291,8 +340,8 @@ export const sendMessageToGemini = async (
         const genAI = new GoogleGenerativeAI(key);
 
         // Default model can be overridden via Supabase secrets/env
-        // Example: supabase secrets set GEMINI_MODEL=gemini-2.5-pro
-        const modelName = Deno.env.get("GEMINI_MODEL") || "gemini-2.5-flash";
+        // Example: supabase secrets set GEMINI_MODEL=gemini-1.5-pro
+        const modelName = Deno.env.get("GEMINI_MODEL") || "gemini-1.5-flash";
 
         const model = genAI.getGenerativeModel({
             model: modelName,
@@ -345,6 +394,31 @@ export const sendMessageToGemini = async (
         // Check for function calls
         const functionCall = response.functionCalls()?.[0];
         if (functionCall) {
+            // Memory tools
+            if (functionCall.name === 'conversation_search') {
+                const query = (functionCall.args as Record<string, unknown>)?.query;
+                if (typeof query === 'string' && query.trim()) {
+                    return {
+                        toolCall: {
+                            tool: 'conversation_search',
+                            args: { query: query.trim() }
+                        }
+                    };
+                }
+            }
+
+            if (functionCall.name === 'recent_chats') {
+                const rawLimit = (functionCall.args as Record<string, unknown>)?.limit;
+                const limit = typeof rawLimit === 'number' ? Math.min(Math.max(rawLimit, 1), 10) : 5;
+                return {
+                    toolCall: {
+                        tool: 'recent_chats',
+                        args: { limit }
+                    }
+                };
+            }
+
+            // Fortnox tools
             if (functionCall.name === 'get_customers' || functionCall.name === 'get_articles') {
                 return {
                     toolCall: {
@@ -393,7 +467,8 @@ export const sendMessageStreamToGemini = async (
         if (!key) throw new Error("GEMINI_API_KEY not found");
 
         const genAI = new GoogleGenerativeAI(key);
-        const modelName = Deno.env.get("GEMINI_MODEL") || "gemini-2.0-flash";
+        // Use same model as non-streaming (gemini-1.5-flash has better rate limits)
+        const modelName = Deno.env.get("GEMINI_MODEL") || "gemini-1.5-flash";
         const model = genAI.getGenerativeModel({
             model: modelName,
             systemInstruction: SYSTEM_INSTRUCTION,

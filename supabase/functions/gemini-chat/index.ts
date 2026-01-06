@@ -1,7 +1,7 @@
 // Supabase Edge Function for Gemini Chat
 /// <reference path="../../types/deno.d.ts" />
 
-import { sendMessageToGemini, sendMessageStreamToGemini, generateConversationTitle, type FileData } from "../../services/GeminiService.ts";
+import { sendMessageToGemini, sendMessageStreamToGemini, generateConversationTitle, type FileData, type ConversationSearchArgs, type RecentChatsArgs } from "../../services/GeminiService.ts";
 import { sendMessageToOpenAI } from "../../services/OpenAIService.ts";
 import { RateLimiterService } from "../../services/RateLimiterService.ts";
 import { CompanyMemoryService, type CompanyMemory } from "../../services/CompanyMemoryService.ts";
@@ -206,7 +206,12 @@ async function searchConversationHistory(
     const { data, error } = await searchQuery;
     if (error) throw error;
 
-    return (data || []).map((row) => ({
+    type MessageRow = {
+        content: string;
+        created_at: string;
+        conversation: { id: string; title: string | null; company_id: string; user_id: string };
+    };
+    return (data as MessageRow[] || []).map((row) => ({
         conversation_id: row.conversation.id,
         conversation_title: row.conversation.title,
         snippet: extractSnippet(row.content, query),
@@ -385,6 +390,7 @@ interface VATReportContext {
 Deno.serve(async (req: Request) => {
     const corsHeaders = getCorsHeaders();
     const provider = (Deno.env.get('LLM_PROVIDER') || 'gemini').toLowerCase();
+    console.log('[INIT] LLM_PROVIDER env value:', Deno.env.get('LLM_PROVIDER'), '-> provider:', provider);
     const responseHeaders = {
         ...corsHeaders,
         'X-LLM-Provider': provider
@@ -505,7 +511,7 @@ Deno.serve(async (req: Request) => {
             }
         }
 
-        let userMessageSaved = false;
+        let _userMessageSaved = false;
         let conversationService: ConversationService | null = null;
 
         if (conversationId) {
@@ -524,7 +530,7 @@ Deno.serve(async (req: Request) => {
                     fileUrl || null,
                     fileName || null
                 );
-                userMessageSaved = true;
+                _userMessageSaved = true;
                 logger.info('User message saved to database', { conversationId });
             } catch (saveError) {
                 logger.error('Failed to save user message', saveError, { conversationId, userId });
@@ -692,7 +698,7 @@ ANVÄNDARFRÅGA:
                         contextBlocks.push(memoryContext);
                     }
 
-                    const memoryIds = userMemories.map((memory) => memory.id);
+                    const memoryIds = (userMemories as UserMemoryRow[]).map((memory) => memory.id);
                     await supabaseAdmin
                         .from('user_memories')
                         .update({ last_used_at: new Date().toISOString() })
@@ -728,8 +734,10 @@ ANVÄNDARFRÅGA:
 
         // Handle Gemini Streaming
         if (provider === 'gemini') {
+            console.log('[STREAMING] Starting Gemini streaming...');
             try {
                 const stream = await sendMessageStreamToGemini(finalMessage, geminiFileData, history);
+                console.log('[STREAMING] Stream created successfully');
                 const encoder = new TextEncoder();
                 let fullText = "";
                 let toolCallDetected: any = null;
@@ -755,11 +763,60 @@ ANVÄNDARFRÅGA:
                             }
 
                             if (toolCallDetected) {
-                                // Important: We need to handle the tool call execution here or relay it
-                                // For simplicity in the initial streaming impl, we send the tool call metadata
-                                const sseToolData = `data: ${JSON.stringify({ toolCall: { tool: toolCallDetected.name, args: toolCallDetected.args } })}\n\n`;
-                                controller.enqueue(encoder.encode(sseToolData));
-                            } else if (fullText && conversationId && userId !== 'anonymous') {
+                                // Execute the tool and stream the result
+                                let toolResponseText = "";
+                                const toolName = toolCallDetected.name;
+                                const toolArgs = toolCallDetected.args || {};
+
+                                try {
+                                    if (toolName === 'conversation_search') {
+                                        const searchQuery = (toolArgs as { query?: string }).query || '';
+                                        const searchResults = await searchConversationHistory(supabaseAdmin, userId, resolvedCompanyId, searchQuery, 5);
+
+                                        if (searchResults.length === 0) {
+                                            const noResultsPrompt = `Jag sökte igenom tidigare konversationer efter "${searchQuery}" men hittade inget relevant. Svara på användarens fråga så gott du kan utan tidigare kontext: "${message}"`;
+                                            const noResultsResponse = await sendMessageToGemini(noResultsPrompt, undefined, history);
+                                            toolResponseText = noResultsResponse.text || `Jag hittade tyvärr inget i tidigare konversationer som matchar "${searchQuery}".`;
+                                        } else {
+                                            const contextLines = searchResults.map(r => `[${r.conversation_title || 'Konversation'}]: ${r.snippet}`);
+                                            const contextPrompt = `SÖKRESULTAT FRÅN TIDIGARE KONVERSATIONER:\n${contextLines.join('\n')}\n\nAnvänd denna kontext för att svara naturligt på användarens fråga: "${message}"`;
+                                            const followUp = await sendMessageToGemini(contextPrompt, undefined, history);
+                                            toolResponseText = followUp.text || formatHistoryResponse(searchQuery, searchResults, []);
+                                        }
+                                    } else if (toolName === 'recent_chats') {
+                                        const limit = (toolArgs as { limit?: number }).limit || 5;
+                                        const recentConversations = await getRecentConversations(supabaseAdmin, userId, resolvedCompanyId, limit);
+
+                                        if (recentConversations.length === 0) {
+                                            toolResponseText = "Du har inga tidigare konversationer ännu.";
+                                        } else {
+                                            const contextLines = recentConversations.map(c => `- ${c.title || 'Konversation'}${c.summary ? ` - ${c.summary}` : ''}`);
+                                            const contextPrompt = `SENASTE KONVERSATIONER:\n${contextLines.join('\n')}\n\nGe en kort överblick baserat på dessa konversationer för att svara på: "${message}"`;
+                                            const followUp = await sendMessageToGemini(contextPrompt, undefined, history);
+                                            toolResponseText = followUp.text || formatHistoryResponse(message, [], recentConversations);
+                                        }
+                                    } else {
+                                        // For other tools (Fortnox), send metadata for client handling
+                                        const sseToolData = `data: ${JSON.stringify({ toolCall: { tool: toolName, args: toolArgs } })}\n\n`;
+                                        controller.enqueue(encoder.encode(sseToolData));
+                                    }
+
+                                    // Stream the tool response as text
+                                    if (toolResponseText) {
+                                        fullText = toolResponseText;
+                                        const sseData = `data: ${JSON.stringify({ text: toolResponseText })}\n\n`;
+                                        controller.enqueue(encoder.encode(sseData));
+                                    }
+                                } catch (toolErr) {
+                                    logger.error('Tool execution error in stream', toolErr);
+                                    toolResponseText = "Ett fel uppstod när jag försökte söka i tidigare konversationer.";
+                                    const sseData = `data: ${JSON.stringify({ text: toolResponseText })}\n\n`;
+                                    controller.enqueue(encoder.encode(sseData));
+                                    fullText = toolResponseText;
+                                }
+                            }
+
+                            if (fullText && conversationId && userId !== 'anonymous') {
                                 // Save final assembled message to database
                                 try {
                                     if (!conversationService) {
@@ -795,9 +852,12 @@ ANVÄNDARFRÅGA:
                     }
                 });
             } catch (err) {
+                console.error('[STREAMING] Streaming failed, falling back to non-streaming:', err);
                 logger.error('Gemini streaming initiation failed', err);
                 // Fallback to non-streaming or error response
             }
+        } else {
+            console.log('[STREAMING] Provider is not gemini, skipping streaming. Provider:', provider);
         }
 
         // OpenAI or Fallback
@@ -826,6 +886,60 @@ ANVÄNDARFRÅGA:
 
             try {
                 switch (tool) {
+                    case 'conversation_search': {
+                        const searchQuery = (args as { query: string }).query;
+                        const searchResults = await searchConversationHistory(
+                            supabaseAdmin,
+                            userId,
+                            resolvedCompanyId,
+                            searchQuery,
+                            5
+                        );
+
+                        if (searchResults.length === 0) {
+                            // No results - respond naturally
+                            const noResultsPrompt = `Jag sökte igenom tidigare konversationer efter "${searchQuery}" men hittade inget relevant. Svara på användarens fråga så gott du kan utan tidigare kontext: "${message}"`;
+                            const noResultsResponse = await sendMessageToGemini(noResultsPrompt, undefined, history);
+                            responseText = noResultsResponse.text || `Jag hittade tyvärr inget i tidigare konversationer som matchar "${searchQuery}". Kan du förtydliga vad du letar efter?`;
+                        } else {
+                            // Format results as context for AI
+                            const contextLines = searchResults.map(r => {
+                                const title = r.conversation_title || 'Konversation';
+                                return `[${title}]: ${r.snippet}`;
+                            });
+
+                            // Send context back to Gemini for natural response
+                            const contextPrompt = `SÖKRESULTAT FRÅN TIDIGARE KONVERSATIONER:\n${contextLines.join('\n')}\n\nAnvänd denna kontext för att svara naturligt på användarens fråga: "${message}"`;
+                            const followUp = await sendMessageToGemini(contextPrompt, undefined, history);
+                            responseText = followUp.text || formatHistoryResponse(searchQuery, searchResults, []);
+                        }
+                        break;
+                    }
+                    case 'recent_chats': {
+                        const limit = (args as { limit?: number }).limit || 5;
+                        const recentConversations = await getRecentConversations(
+                            supabaseAdmin,
+                            userId,
+                            resolvedCompanyId,
+                            limit
+                        );
+
+                        if (recentConversations.length === 0) {
+                            responseText = "Du har inga tidigare konversationer ännu.";
+                        } else {
+                            // Format for AI context
+                            const contextLines = recentConversations.map(c => {
+                                const title = c.title || 'Konversation';
+                                const summary = c.summary ? ` - ${c.summary}` : '';
+                                return `- ${title}${summary}`;
+                            });
+
+                            const contextPrompt = `SENASTE KONVERSATIONER:\n${contextLines.join('\n')}\n\nGe en kort överblick baserat på dessa konversationer för att svara på: "${message}"`;
+                            const followUp = await sendMessageToGemini(contextPrompt, undefined, history);
+                            responseText = followUp.text || formatHistoryResponse(message, [], recentConversations);
+                        }
+                        break;
+                    }
                     case 'create_invoice':
                         return new Response(JSON.stringify({ type: 'json', data: args }), {
                             status: 200, headers: { ...responseHeaders, "Content-Type": "application/json" }
@@ -841,7 +955,9 @@ ANVÄNDARFRÅGA:
                 }
             } catch (err) {
                 logger.error('Tool execution failed', err);
-                responseText = "Ett fel uppstod när jag försökte nå Fortnox.";
+                responseText = tool === 'conversation_search' || tool === 'recent_chats'
+                    ? "Jag kunde inte söka i tidigare konversationer just nu."
+                    : "Ett fel uppstod när jag försökte nå Fortnox.";
             }
 
             return new Response(JSON.stringify({ type: 'text', data: responseText }), {

@@ -12,6 +12,7 @@ import { chatService, type AIAnalysisProgress } from '../services/ChatService';
 import { uiController } from '../services/UIService';
 import { logger } from '../services/LoggerService';
 import { conversationController } from './ConversationController';
+import { memoryService } from '../services/MemoryService';
 import type { VATReportResponse, VATReportData } from '../types/vat';
 
 export class ChatController {
@@ -50,6 +51,9 @@ export class ChatController {
         // Clear rate limit (it's per-user, not per-company, but reset UI for fresh start)
         this.rateLimitActive = false;
         this.rateLimitResetAt = null;
+
+        // Reset memory service (cancel any pending generation)
+        memoryService.reset();
 
         // Clear file preview UI
         const filePreview = document.getElementById('file-preview');
@@ -358,6 +362,9 @@ export class ChatController {
                     }))
                 });
                 chatService.dispatchRefresh();
+
+                // Schedule automatic memory generation after idle timeout
+                memoryService.scheduleGeneration(conversationId);
             }
         } else {
             // Get VAT report context if available
@@ -400,6 +407,11 @@ export class ChatController {
                     }
                 }
                 chatService.dispatchRefresh();
+
+                // Schedule automatic memory generation after idle timeout
+                if (conversationId) {
+                    memoryService.scheduleGeneration(conversationId);
+                }
             } catch (error) {
                 const maybeResponse = (error && typeof error === 'object' && 'context' in error)
                     ? (error as { context?: unknown }).context
