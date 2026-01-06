@@ -1,5 +1,6 @@
 import { createClient } from '@supabase/supabase-js';
-import './landing/styles/landing.css';
+import './styles/main.css'; // Shared styles
+import './landing/styles/landing.css'; // Landing specific styles (for animations etc)
 import { logger } from './services/LoggerService';
 import { CURRENT_TERMS_VERSION } from './constants/termsVersion';
 

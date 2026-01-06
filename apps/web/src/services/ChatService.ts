@@ -70,7 +70,7 @@ export interface AnalysisResult {
     success: boolean;
     response?: VATReportResponse;
     error?: string;
-    backend: 'python' | 'claude' | 'ai';
+    backend: 'python' | 'claude' | 'ai' | 'edge';
 }
 
 export interface AIAnalysisProgress {
@@ -92,13 +92,14 @@ class ChatServiceClass {
     }
 
     /**
-     * Send a message to Gemini AI
+     * Send a message to Gemini AI with streaming support
      */
     async sendToGemini(
         message: string,
         file: File | null = null,
         fileUrl: string | null = null,
-        vatReportContext: Record<string, unknown> | null = null
+        vatReportContext: Record<string, unknown> | null = null,
+        onStreamingChunk?: (chunk: string) => void
     ): Promise<GeminiResponse> {
         logger.startTimer('gemini-chat');
 
@@ -142,7 +143,6 @@ class ChatServiceClass {
             const company = companyManager.getCurrent();
             let conversationId = company.conversationId;
 
-            // If conversationId is missing, try to get/create it
             if (!conversationId) {
                 const newConversationId = await this.getOrCreateConversation(company.id);
                 if (newConversationId) {
@@ -151,14 +151,21 @@ class ChatServiceClass {
                 }
             }
 
-            // Get recent chat history
             const history = conversationId
                 ? await this.getRecentHistory(conversationId, 20)
                 : [];
 
-            // Call Gemini Edge Function
-            const { data, error } = await supabase.functions.invoke('gemini-chat', {
-                body: {
+            const { data: { session } } = await supabase.auth.getSession();
+            if (!session) throw new Error('Not authenticated');
+
+            // Use direct fetch for streaming support
+            const response = await fetch(`${this.supabaseUrl}/functions/v1/gemini-chat`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${session.access_token}`
+                },
+                body: JSON.stringify({
                     message,
                     fileData,
                     fileDataPages,
@@ -169,22 +176,78 @@ class ChatServiceClass {
                     fileUrl,
                     fileName: file?.name || null,
                     vatReportContext
-                }
+                })
             });
 
-            if (error) {
-                throw error;
+            if (!response.ok) {
+                const errorData = await response.json().catch(() => ({ error: 'Unknown error' }));
+                throw new Error(errorData.message || errorData.error || `HTTP ${response.status}`);
             }
 
-            logger.info('Gemini response received', {
-                type: data?.type,
-                hasVatContext: !!vatReportContext
-            });
+            // Check if it's a streaming response
+            const contentType = response.headers.get('Content-Type');
+            const llmProvider = response.headers.get('X-LLM-Provider');
+            console.log('🔍 [ChatService] Response received - Content-Type:', contentType);
+            console.log('🔍 [ChatService] Response status:', response.status, 'ok:', response.ok);
+            console.log('🔍 [ChatService] X-LLM-Provider header:', llmProvider);
+            if (contentType?.includes('text/event-stream')) {
+                console.log('✅ [ChatService] Starting SSE streaming...');
+                const reader = response.body?.getReader();
+                if (!reader) throw new Error('No response body');
 
-            // Dispatch refresh event for UI
+                const decoder = new TextDecoder();
+                let fullText = "";
+                let toolCall: any = null;
+
+                while (true) {
+                    const { done, value } = await reader.read();
+                    if (done) break;
+
+                    const chunk = decoder.decode(value, { stream: true });
+                    const lines = chunk.split('\n');
+
+                    for (const line of lines) {
+                        if (line.startsWith('data: ')) {
+                            const dataStr = line.slice(6).trim();
+                            if (dataStr === '[DONE]') continue;
+
+                            try {
+                                const data = JSON.parse(dataStr);
+                                if (data.text) {
+                                    fullText += data.text;
+                                    console.log('📡 [ChatService] Streaming chunk:', data.text.substring(0, 50));
+                                    if (onStreamingChunk) onStreamingChunk(data.text);
+                                }
+                                if (data.toolCall) {
+                                    toolCall = data.toolCall;
+                                }
+                            } catch (e) {
+                                logger.warn('Failed to parse SSE data', { dataStr });
+                            }
+                        }
+                    }
+                }
+
+                // Dispatch refresh for historical context
+                window.dispatchEvent(new CustomEvent('chat-refresh'));
+
+                if (toolCall) {
+                    return { type: 'json', data: toolCall.args, toolCall: { tool: toolCall.name, args: toolCall.args } } as any;
+                }
+
+                return {
+                    type: 'text',
+                    data: fullText
+                } as GeminiResponse;
+            }
+
+            // Fallback for non-streaming response
+            console.log('⚠️ [ChatService] Non-streaming fallback - Content-Type was:', contentType);
+            const data = await response.json();
+            console.log('📦 [ChatService] Received JSON response:', data?.type);
             window.dispatchEvent(new CustomEvent('chat-refresh'));
-
             return data as GeminiResponse;
+
         } catch (error) {
             logger.error('Gemini chat error', error);
 
@@ -209,25 +272,25 @@ class ChatServiceClass {
     }
 
     /**
-     * Analyze Excel file with Python API (with Claude fallback)
+     * Analyze Excel file with Edge Function (with Claude fallback)
      */
     async analyzeExcel(file: File): Promise<AnalysisResult> {
         logger.startTimer('excel-analysis');
         logger.info('Starting Excel analysis', { filename: file.name });
 
-        // Try Python API first
+        // Try Edge Function first (deterministic analysis)
         try {
-            const response = await this.analyzeExcelWithPython(file);
+            const response = await this.analyzeExcelWithEdge(file);
             logger.endTimer('excel-analysis');
-            logger.info('Excel analysis succeeded with Python API');
+            logger.info('Excel analysis succeeded with Edge Function');
 
             return {
                 success: true,
                 response,
-                backend: 'python'
+                backend: 'edge'
             };
-        } catch (pythonError) {
-            logger.warn('Python API failed, falling back to Claude', { error: pythonError });
+        } catch (edgeError) {
+            logger.warn('Edge Function failed, falling back to Claude', { error: edgeError });
 
             // Try Claude fallback
             try {
@@ -242,7 +305,7 @@ class ChatServiceClass {
                 };
             } catch (claudeError) {
                 logger.endTimer('excel-analysis');
-                logger.error('Both Python and Claude failed', { claudeError });
+                logger.error('Both Edge and Claude failed', { claudeError });
 
                 const errorMessage = claudeError instanceof Error
                     ? claudeError.message
@@ -259,8 +322,8 @@ class ChatServiceClass {
 
     /**
      * AI-First Excel Analysis with streaming progress
-     * Uses Gemini to intelligently parse ANY Excel format
-     * Large files (>500KB) are routed to Python API to avoid Edge Function timeout
+     * Uses Edge Function for deterministic parsing of Excel files
+     * All file sizes now handled by analyze-excel-ai Edge Function
      */
     async analyzeExcelWithAI(
         file: File,
@@ -270,20 +333,20 @@ class ChatServiceClass {
         logger.startTimer('excel-analysis-ai');
         logger.info('Starting AI Excel analysis', { filename: file.name, size: file.size });
 
-        // Route large files to Python API (Edge Functions timeout on large files)
-        const LARGE_FILE_THRESHOLD = 500 * 1024; // 500KB
+        // All files now handled by Edge Function (5MB limit enforced server-side)
+        const LARGE_FILE_THRESHOLD = 500 * 1024; // 500KB - show message for larger files
         if (file.size > LARGE_FILE_THRESHOLD) {
-            logger.info('Large file detected, routing to Python API', {
+            logger.info('Large file detected', {
                 size: file.size,
                 threshold: LARGE_FILE_THRESHOLD
             });
 
-            onProgress({ step: 'calculating', message: 'Stor fil - använder Python API...', progress: 0.3 });
+            onProgress({ step: 'calculating', message: 'Stor fil - analyserar...', progress: 0.3 });
 
             try {
-                const pythonResponse = await this.analyzeExcelWithPython(file, conversationId);
+                const edgeResponse = await this.analyzeExcelWithEdge(file, conversationId);
                 logger.endTimer('excel-analysis-ai');
-                logger.info('Large file analysis succeeded via Python API');
+                logger.info('Large file analysis succeeded via Edge Function');
 
                 // Signal completion to UI
                 onProgress({ step: 'complete', message: 'Analys klar!', progress: 1.0 });
@@ -291,17 +354,17 @@ class ChatServiceClass {
                 // Return in same format as Edge Function path
                 return {
                     success: true,
-                    response: pythonResponse,
-                    backend: 'python'
+                    response: edgeResponse,
+                    backend: 'edge'
                 };
-            } catch (pythonError) {
+            } catch (edgeError) {
                 logger.endTimer('excel-analysis-ai');
-                logger.error('Python API failed for large file', pythonError);
+                logger.error('Edge Function failed for large file', edgeError);
 
                 return {
                     success: false,
-                    error: pythonError instanceof Error ? pythonError.message : 'Python API fel',
-                    backend: 'python'
+                    error: edgeError instanceof Error ? edgeError.message : 'Edge Function fel',
+                    backend: 'edge'
                 };
             }
         }
@@ -414,9 +477,10 @@ class ChatServiceClass {
     }
 
     /**
-     * Analyze Excel with Python API
+     * Analyze Excel with Edge Function (deterministic)
+     * Replaced python-proxy - now all Excel analysis goes through analyze-excel-ai
      */
-    private async analyzeExcelWithPython(file: File, conversationId?: string): Promise<VATReportResponse> {
+    private async analyzeExcelWithEdge(file: File, conversationId?: string): Promise<VATReportResponse> {
         const { data: { session } } = await supabase.auth.getSession();
         if (!session) {
             throw new Error('Inte inloggad');
@@ -425,12 +489,12 @@ class ChatServiceClass {
         // Convert file to base64
         const base64Result = await fileService.toBase64WithPadding(file);
 
-        logger.debug('Sending to Python API', {
+        logger.debug('Sending to Edge Function (analyze-excel-ai)', {
             filename: file.name,
             base64Length: base64Result.paddedLength
         });
 
-        const response = await fetch(`${this.supabaseUrl}/functions/v1/python-proxy`, {
+        const response = await fetch(`${this.supabaseUrl}/functions/v1/analyze-excel-ai`, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
@@ -449,17 +513,51 @@ class ChatServiceClass {
 
         if (!response.ok) {
             const errorData = await response.json().catch(() => ({ error: 'Unknown error' }));
-            logger.error('Python API error response', {
+            logger.error('Edge Function error response', {
                 status: response.status,
                 errorData
             });
             throw new Error(errorData.message || errorData.error || `HTTP ${response.status}`);
         }
 
-        const result = await response.json();
-        logger.info('Python API response received', { type: result.type });
+        // Handle SSE streaming response
+        const reader = response.body?.getReader();
+        if (!reader) {
+            throw new Error('Ingen response stream');
+        }
 
-        return result;
+        const decoder = new TextDecoder();
+        let finalReport: VATReportResponse | null = null;
+
+        while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+
+            const chunk = decoder.decode(value, { stream: true });
+            const lines = chunk.split('\n');
+
+            for (const line of lines) {
+                if (line.startsWith('data: ')) {
+                    try {
+                        const data = JSON.parse(line.slice(6));
+                        if (data.step === 'complete' && data.report) {
+                            finalReport = data.report;
+                        } else if (data.step === 'error') {
+                            throw new Error(data.error || 'Analys misslyckades');
+                        }
+                    } catch (parseError) {
+                        // Ignore parse errors for partial chunks
+                    }
+                }
+            }
+        }
+
+        if (!finalReport) {
+            throw new Error('Ingen rapport returnerades');
+        }
+
+        logger.info('Edge Function response received', { type: finalReport.type });
+        return finalReport;
     }
 
     /**

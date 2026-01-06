@@ -3,6 +3,7 @@ import { supabase } from '../lib/supabase';
 import { CURRENT_TERMS_VERSION } from '../constants/termsVersion';
 import { CHANGELOG, type ChangelogEntry } from '../constants/changelog';
 import type { User } from '@supabase/supabase-js';
+import { withTimeout, TimeoutError } from '../utils/asyncTimeout';
 
 interface SettingsModalProps {
     onClose: () => void;
@@ -24,13 +25,30 @@ export function SettingsModal({ onClose, onLogout }: SettingsModalProps) {
         dailyReset: string | null;
     } | null>(null);
     const [usageError, setUsageError] = useState<string | null>(null);
+    const [abortController, setAbortController] = useState<AbortController | null>(null);
+    const [loadingTimeout, setLoadingTimeout] = useState(false);
 
     const planLimits = plan === 'pro'
         ? { hourly: 40, daily: 200 }
         : { hourly: 10, daily: 50 };
 
     useEffect(() => {
+        const controller = new AbortController();
+        setAbortController(controller);
+
         loadData();
+
+        // Show "taking longer than usual" after 5 seconds
+        const feedbackTimeout = setTimeout(() => {
+            setLoadingTimeout(true);
+        }, 5000);
+
+        // Cleanup: abort pending requests and clear timeout
+        return () => {
+            controller.abort();
+            clearTimeout(feedbackTimeout);
+            setAbortController(null);
+        };
     }, []);
 
     function normalizePlan(value: unknown): 'free' | 'pro' {
@@ -46,12 +64,18 @@ export function SettingsModal({ onClose, onLogout }: SettingsModalProps) {
     async function loadUsage(userId: string) {
         setUsageError(null);
         try {
-            const { data, error } = await supabase
+            const usageQuery = supabase
                 .from('api_usage')
                 .select('hourly_count, daily_count, hourly_reset, daily_reset')
                 .eq('user_id', userId)
                 .eq('endpoint', 'ai')
                 .maybeSingle();
+
+            const { data, error } = await withTimeout(
+                usageQuery as unknown as Promise<typeof usageQuery>,
+                10000,
+                'Tidsgräns för användningsdata'
+            ) as any;
 
             if (error) throw error;
 
@@ -74,25 +98,41 @@ export function SettingsModal({ onClose, onLogout }: SettingsModalProps) {
         } catch (error) {
             console.error('Error loading usage data:', error);
             setUsage(null);
-            setUsageError('Kunde inte ladda användning just nu.');
+
+            if (error instanceof TimeoutError) {
+                setUsageError('Tidsgränsen nåddes. Försök igen.');
+            } else {
+                setUsageError('Kunde inte ladda användning just nu.');
+            }
         }
     }
 
     async function loadData() {
         try {
-            // Get user first
-            const { data: { user: currentUser }, error: userError } = await supabase.auth.getUser();
+            // Get user first with timeout (10s for auth)
+            const { data: { user: currentUser }, error: userError } = await withTimeout(
+                supabase.auth.getUser(),
+                10000,
+                'Tidsgräns för autentisering'
+            );
+
             if (userError) throw userError;
             if (!currentUser) throw new Error('No user found');
 
             setUser(currentUser);
 
-            // Then get profile
-            const { data, error } = await supabase
+            // Then get profile with timeout (10s for DB query)
+            const profileQuery = supabase
                 .from('profiles')
                 .select('full_name, terms_version, plan')
                 .eq('id', currentUser.id)
                 .single();
+
+            const { data, error } = await withTimeout(
+                profileQuery as unknown as Promise<typeof profileQuery>,
+                10000,
+                'Tidsgräns för profilhämtning'
+            ) as any;
 
             if (error) throw error;
 
@@ -102,10 +142,21 @@ export function SettingsModal({ onClose, onLogout }: SettingsModalProps) {
                 setPlan(normalizePlan((data as unknown as { plan?: unknown })?.plan));
             }
 
+            // Load usage data (another 10s timeout)
             await loadUsage(currentUser.id);
         } catch (error) {
             console.error('Error loading settings data:', error);
-            setMessage({ type: 'error', text: 'Kunde inte ladda användardata.' });
+
+            // Check if component was aborted (unmounted)
+            if (abortController?.signal.aborted) {
+                return; // Don't show error if user closed modal
+            }
+
+            if (error instanceof TimeoutError) {
+                setMessage({ type: 'error', text: 'Tidsgränsen nåddes. Försök igen.' });
+            } else {
+                setMessage({ type: 'error', text: 'Kunde inte ladda användardata.' });
+            }
         } finally {
             setLoading(false);
         }
@@ -119,10 +170,16 @@ export function SettingsModal({ onClose, onLogout }: SettingsModalProps) {
         setMessage(null);
 
         try {
-            const { error } = await supabase
+            const updateQuery = supabase
                 .from('profiles')
                 .update({ full_name: fullName })
                 .eq('id', user.id);
+
+            const { error } = await withTimeout(
+                updateQuery as unknown as Promise<typeof updateQuery>,
+                10000,
+                'Tidsgräns för sparande'
+            ) as any;
 
             if (error) throw error;
 
@@ -132,7 +189,12 @@ export function SettingsModal({ onClose, onLogout }: SettingsModalProps) {
             setTimeout(() => setMessage(null), 3000);
         } catch (error) {
             console.error('Error updating profile:', error);
-            setMessage({ type: 'error', text: 'Kunde inte spara ändringar.' });
+
+            if (error instanceof TimeoutError) {
+                setMessage({ type: 'error', text: 'Tidsgränsen nåddes. Försök igen.' });
+            } else {
+                setMessage({ type: 'error', text: 'Kunde inte spara ändringar.' });
+            }
         } finally {
             setSaving(false);
         }
@@ -145,7 +207,7 @@ export function SettingsModal({ onClose, onLogout }: SettingsModalProps) {
             left: 0,
             right: 0,
             bottom: 0,
-            backgroundColor: 'rgba(0, 0, 0, 0.7)',
+            backgroundColor: 'var(--overlay-bg)',
             backdropFilter: 'blur(5px)',
             display: 'flex',
             alignItems: 'center',
@@ -201,7 +263,18 @@ export function SettingsModal({ onClose, onLogout }: SettingsModalProps) {
                 </h2>
 
                 {loading ? (
-                    <div style={{ textAlign: 'center', padding: '2rem' }}>Laddar...</div>
+                    <div style={{ textAlign: 'center', padding: '2rem' }}>
+                        <div className="modal-spinner" style={{ margin: '0 auto 1rem' }} role="status" aria-label="Laddar"></div>
+                        {loadingTimeout && (
+                            <div style={{
+                                fontSize: '0.85rem',
+                                color: 'var(--accent-primary)',
+                                marginTop: '0.5rem'
+                            }}>
+                                Detta tar längre tid än vanligt. Kontrollera din internetanslutning.
+                            </div>
+                        )}
+                    </div>
                 ) : (
                     <div className="settings-content">
                         <section style={{ marginBottom: '2rem' }}>
@@ -234,9 +307,9 @@ export function SettingsModal({ onClose, onLogout }: SettingsModalProps) {
                                     padding: '0.8rem',
                                     borderRadius: '8px',
                                     marginBottom: '1rem',
-                                    background: 'rgba(239, 68, 68, 0.15)',
-                                    color: '#ef4444',
-                                    border: '1px solid rgba(239, 68, 68, 0.3)'
+                                    background: 'var(--status-danger-bg)',
+                                    color: 'var(--status-danger)',
+                                    border: '1px solid var(--status-danger-border)'
                                 }}>
                                     {usageError}
                                 </div>
@@ -291,14 +364,19 @@ export function SettingsModal({ onClose, onLogout }: SettingsModalProps) {
                                             style={{
                                                 display: 'block',
                                                 marginTop: '1rem',
-                                                padding: '0.75rem 1rem',
-                                                borderRadius: '10px',
+                                                padding: '0.85rem 1rem',
+                                                borderRadius: '99px',
                                                 textAlign: 'center',
                                                 textDecoration: 'none',
-                                                fontWeight: 700,
+                                                fontWeight: '500',
+                                                fontSize: '0.9rem',
                                                 color: '#fff',
-                                                background: 'linear-gradient(135deg, var(--accent-primary), var(--accent-secondary))'
+                                                background: '#1a1a1a',
+                                                boxShadow: '0 2px 8px rgba(0, 0, 0, 0.15)',
+                                                transition: 'all 0.2s ease'
                                             }}
+                                            onMouseOver={(e) => (e.currentTarget.style.background = '#2a2a2a')}
+                                            onMouseOut={(e) => (e.currentTarget.style.background = '#1a1a1a')}
                                         >
                                             Uppgradera till Pro
                                         </a>
@@ -355,9 +433,15 @@ export function SettingsModal({ onClose, onLogout }: SettingsModalProps) {
                                             padding: '0.8rem',
                                             borderRadius: '8px',
                                             marginBottom: '1rem',
-                                            background: message.type === 'success' ? 'rgba(16, 185, 129, 0.2)' : 'rgba(239, 68, 68, 0.2)',
-                                            color: message.type === 'success' ? '#10b981' : '#ef4444',
-                                            border: `1px solid ${message.type === 'success' ? '#10b981' : '#ef4444'}`
+                                            background: message.type === 'success'
+                                                ? 'var(--status-success-bg)'
+                                                : 'var(--status-danger-bg)',
+                                            color: message.type === 'success'
+                                                ? 'var(--status-success)'
+                                                : 'var(--status-danger)',
+                                            border: `1px solid ${message.type === 'success'
+                                                ? 'var(--status-success-border)'
+                                                : 'var(--status-danger-border)'}`
                                         }}>
                                             {message.text}
                                         </div>
@@ -366,18 +450,22 @@ export function SettingsModal({ onClose, onLogout }: SettingsModalProps) {
                                     <button
                                         type="submit"
                                         disabled={saving}
-                                        className="btn-glow"
                                         style={{
                                             width: '100%',
-                                            padding: '0.8rem',
-                                            borderRadius: '8px',
+                                            padding: '0.85rem',
+                                            borderRadius: '99px',
                                             border: 'none',
-                                            background: 'linear-gradient(135deg, var(--accent-primary), var(--accent-secondary))',
+                                            background: '#1a1a1a',
                                             color: 'white',
-                                            fontWeight: '600',
+                                            fontWeight: '500',
+                                            fontSize: '0.9rem',
                                             cursor: saving ? 'wait' : 'pointer',
-                                            opacity: saving ? 0.7 : 1
+                                            opacity: saving ? 0.7 : 1,
+                                            transition: 'all 0.2s ease',
+                                            boxShadow: '0 2px 8px rgba(0, 0, 0, 0.15)'
                                         }}
+                                        onMouseOver={(e) => !saving && (e.currentTarget.style.background = '#2a2a2a')}
+                                        onMouseOut={(e) => (e.currentTarget.style.background = '#1a1a1a')}
                                     >
                                         {saving ? 'Sparar...' : 'Spara ändringar'}
                                     </button>

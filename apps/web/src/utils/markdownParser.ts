@@ -27,33 +27,84 @@ export interface ParsedContent {
 export function parseAIResponse(text: string): ParsedContent[] {
     const blocks: ParsedContent[] = [];
 
-    // Split by code blocks first
+    // 1. Identify all code blocks and tables with their indices
     const codeBlockRegex = /```(\w+)?\n([\s\S]*?)```/g;
-    let lastIndex = 0;
-    let match;
+    const tableRegex = /((?:^|\n)\|.*\|(?:\n|$)(?:\|[-:| ]*\|(?:\n|$))(?:\|.*\|(?:\n|$))*)/g;
 
+    interface FoundBlock {
+        type: 'code' | 'table';
+        start: number;
+        end: number;
+        content: string;
+        language?: string;
+    }
+
+    const foundBlocks: FoundBlock[] = [];
+
+    // Find code blocks
+    let match;
     while ((match = codeBlockRegex.exec(text)) !== null) {
-        // Add text before this code block
-        if (match.index > lastIndex) {
-            const textBefore = text.slice(lastIndex, match.index).trim();
+        foundBlocks.push({
+            type: 'code',
+            start: match.index,
+            end: match.index + match[0].length,
+            content: match[2].trim(),
+            language: match[1] || 'text'
+        });
+    }
+
+    // Find tables
+    while ((match = tableRegex.exec(text)) !== null) {
+        const tableContent = match[1].trim();
+        if (containsMarkdownTable(tableContent)) {
+            foundBlocks.push({
+                type: 'table',
+                start: match.index,
+                end: match.index + match[0].length,
+                content: tableContent
+            });
+        }
+    }
+
+    // Sort blocks by start index
+    foundBlocks.sort((a, b) => a.start - b.start);
+
+    // 2. Filter out overlapping blocks (e.g. table inside code block)
+    const filteredBlocks: FoundBlock[] = [];
+    let lastEnd = 0;
+
+    for (const block of foundBlocks) {
+        if (block.start >= lastEnd) {
+            filteredBlocks.push(block);
+            lastEnd = block.end;
+        }
+    }
+
+    // 3. Construct the actual ParsedContent blocks
+    let lastProcessedIndex = 0;
+
+    for (const block of filteredBlocks) {
+        // Add text before this block
+        if (block.start > lastProcessedIndex) {
+            const textBefore = text.slice(lastProcessedIndex, block.start).trim();
             if (textBefore) {
                 blocks.push({ type: 'text', content: textBefore });
             }
         }
 
-        // Add code block
+        // Add the structured block
         blocks.push({
-            type: 'code',
-            language: match[1] || 'text',
-            content: match[2].trim(),
+            type: block.type,
+            content: block.content,
+            language: block.language
         });
 
-        lastIndex = match.index + match[0].length;
+        lastProcessedIndex = block.end;
     }
 
     // Add remaining text
-    if (lastIndex < text.length) {
-        const remaining = text.slice(lastIndex).trim();
+    if (lastProcessedIndex < text.length) {
+        const remaining = text.slice(lastProcessedIndex).trim();
         if (remaining) {
             blocks.push({ type: 'text', content: remaining });
         }

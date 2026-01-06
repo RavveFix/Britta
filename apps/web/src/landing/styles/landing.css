@@ -1,52 +1,17 @@
 :root {
-    /* Base Colors (Dark Mode Default) */
-    --bg-color: #050505;
-    --text-primary: #ffffff;
-    --text-secondary: #a1a1aa;
-
-    /* Accents */
-    --accent-primary: #00F0FF;
-    --accent-secondary: #7000FF;
-    --accent-tertiary: #FF0055;
-
-    /* Glass Effect */
-    --glass-bg: rgba(255, 255, 255, 0.03);
-    --glass-border: rgba(255, 255, 255, 0.08);
-    --glass-highlight: rgba(255, 255, 255, 0.1);
-
-    /* Typography */
-    --font-sans: 'Inter', system-ui, -apple-system, sans-serif;
-    --font-mono: 'JetBrains Mono', monospace;
-
+    /* Layout */
     --container-width: 1200px;
 
-    /* Blob Colors */
-    --blob-color-1: var(--accent-primary);
-    --blob-color-2: var(--accent-secondary);
-    --blob-color-3: var(--accent-tertiary);
+    /* Landing Specific Blob Colors (override main if needed, or keep unique ones) */
+    /* Often main.css defines these too, but let's see. 
+       main.css has --blob-color-1, 2, 3. 
+       Let's defer to main.css for consistency unless specific tweaks needed. 
+       Removing duplicate base colors and accents as they come from main.css */
 }
 
-/* Light Theme */
-[data-theme="light"] {
-    --bg-color: #f8fafc;
-    --text-primary: #0f172a;
-    --text-secondary: #64748b;
+/* Light Theme overrides are handled by main.css [data-theme="light"] block generally. 
+   If landing needs specific overrides, keep them, but remove duplicates. */
 
-    /* Accents (Adjusted for contrast) */
-    --accent-primary: #0284c7;
-    --accent-secondary: #7c3aed;
-    --accent-tertiary: #db2777;
-
-    /* Glass Effect */
-    --glass-bg: rgba(255, 255, 255, 0.75);
-    --glass-border: rgba(0, 0, 0, 0.08);
-    --glass-highlight: rgba(255, 255, 255, 0.5);
-
-    /* Blob Colors (Soft Pastels) */
-    --blob-color-1: rgba(14, 165, 233, 0.25);
-    --blob-color-2: rgba(245, 158, 11, 0.25);
-    --blob-color-3: rgba(168, 85, 247, 0.25);
-}
 
 * {
     margin: 0;
@@ -59,8 +24,18 @@ body {
     color: var(--text-primary);
     font-family: var(--font-sans);
     line-height: 1.5;
-    overflow-x: hidden;
     -webkit-font-smoothing: antialiased;
+}
+
+/* 
+   Override main.css global lock 
+   main.css sets height: 100vh and overflow: hidden on html/body.
+   We need auto height and scrolling for the landing page.
+*/
+html, body {
+    height: auto !important;
+    overflow-y: auto !important;
+    overflow-x: hidden !important;
 }
 
 /* Aurora Background */

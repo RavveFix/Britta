@@ -269,8 +269,8 @@
 .btn-secondary {
     flex: 1;
     padding: 12px 20px;
-    border-radius: 10px;
-    font-weight: 600;
+    border-radius: 99px;
+    font-weight: 500;
     cursor: pointer;
     display: flex;
     align-items: center;
@@ -278,17 +278,23 @@
     gap: 8px;
     transition: all 0.2s ease;
     border: none;
-    font-size: 0.95rem;
+    font-size: 0.9rem;
 }
 
 .btn-primary {
-    background: linear-gradient(135deg, #6366f1, #8b5cf6);
+    background: #1a1a1a;
     color: white;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
 }
 
 .btn-primary:hover:not(:disabled) {
-    transform: translateY(-2px);
-    box-shadow: 0 8px 16px rgba(99, 102, 241, 0.3);
+    background: #2a2a2a;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+}
+
+.btn-primary:active:not(:disabled) {
+    background: #0a0a0a;
+    transform: scale(0.98);
 }
 
 .btn-primary:disabled {
@@ -297,11 +303,11 @@
 }
 
 .btn-primary.success {
-    background: linear-gradient(135deg, #10b981, #059669);
+    background: #059669;
 }
 
 .btn-primary.error {
-    background: linear-gradient(135deg, #ef4444, #dc2626);
+    background: #dc2626;
 }
 
 .btn-secondary {
@@ -379,4 +385,193 @@
 
 .transactions-list::-webkit-scrollbar-thumb:hover {
     background: rgba(255, 255, 255, 0.3);
+}
+
+/* Journal Entries */
+
+.journal-entries-list {
+    padding: 8px;
+}
+
+.journal-entries {
+    font-size: 0.85rem;
+}
+
+.journal-header {
+    display: grid;
+    grid-template-columns: 80px 1fr 90px 90px;
+    gap: 8px;
+    padding: 8px 12px;
+    background: rgba(0, 0, 0, 0.1);
+    font-weight: 600;
+    border-radius: 4px;
+    margin-bottom: 4px;
+}
+
+[data-theme="dark"] .journal-header {
+    background: rgba(255, 255, 255, 0.1);
+}
+
+.journal-row {
+    display: grid;
+    grid-template-columns: 80px 1fr 90px 90px;
+    gap: 8px;
+    padding: 8px 12px;
+    border-bottom: 1px solid var(--glass-border);
+}
+
+.journal-row:last-child {
+    border-bottom: none;
+}
+
+.journal-debit,
+.journal-credit {
+    text-align: right;
+    font-family: 'SF Mono', 'Fira Code', monospace;
+}
+
+.journal-name {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+/* BAS Account Tooltips */
+
+.account-with-tooltip {
+    position: relative;
+    cursor: help;
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    font-family: 'SF Mono', 'Fira Code', monospace;
+    font-weight: 500;
+}
+
+.tooltip-icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 14px;
+    height: 14px;
+    background: rgba(99, 102, 241, 0.2);
+    color: #6366f1;
+    border-radius: 50%;
+    font-size: 10px;
+    font-weight: 600;
+    font-style: normal;
+}
+
+/* Warnings Panel */
+
+.warnings-panel {
+    margin-top: 16px;
+    padding: 16px;
+    background: rgba(0, 0, 0, 0.03);
+    border-radius: 12px;
+    border: 1px solid var(--glass-border);
+}
+
+[data-theme="dark"] .warnings-panel {
+    background: rgba(0, 0, 0, 0.15);
+}
+
+.warnings-panel h4 {
+    margin: 0 0 12px 0;
+    font-size: 1rem;
+    font-weight: 600;
+}
+
+.warning-section {
+    margin-bottom: 12px;
+}
+
+.warning-section:last-child {
+    margin-bottom: 0;
+}
+
+.warning-section h5 {
+    font-size: 0.85rem;
+    margin: 0 0 8px 0;
+    opacity: 0.9;
+}
+
+.warning-item {
+    padding: 10px 12px;
+    border-radius: 8px;
+    margin-bottom: 6px;
+    font-size: 0.85rem;
+}
+
+.warning-item:last-child {
+    margin-bottom: 0;
+}
+
+.warning-item.error {
+    background: rgba(239, 68, 68, 0.1);
+    border-left: 3px solid #ef4444;
+}
+
+.warning-item.warning {
+    background: rgba(245, 158, 11, 0.1);
+    border-left: 3px solid #f59e0b;
+}
+
+.warning-item.info {
+    background: rgba(59, 130, 246, 0.1);
+    border-left: 3px solid #3b82f6;
+}
+
+.warning-item p {
+    margin: 4px 0;
+}
+
+.warning-code {
+    display: inline-block;
+    font-family: 'SF Mono', 'Fira Code', monospace;
+    font-size: 0.75rem;
+    background: rgba(0, 0, 0, 0.1);
+    padding: 2px 6px;
+    border-radius: 4px;
+    margin-bottom: 4px;
+}
+
+[data-theme="dark"] .warning-code {
+    background: rgba(255, 255, 255, 0.1);
+}
+
+.warning-item .suggestion {
+    font-size: 0.8rem;
+    color: var(--text-secondary);
+    margin-top: 6px;
+    padding-left: 12px;
+    border-left: 2px solid var(--glass-border);
+}
+
+.transaction-ref {
+    display: inline-block;
+    font-size: 0.75rem;
+    color: var(--text-secondary);
+    font-family: 'SF Mono', 'Fira Code', monospace;
+    margin-top: 4px;
+}
+
+/* Responsive adjustments for journal entries */
+
+@media (max-width: 768px) {
+    .journal-header,
+    .journal-row {
+        grid-template-columns: 60px 1fr 70px 70px;
+        font-size: 0.8rem;
+    }
+
+    .journal-header span:nth-child(2),
+    .journal-row .journal-name {
+        display: none;
+    }
+
+    .journal-header,
+    .journal-row {
+        grid-template-columns: 60px 70px 70px;
+    }
 }

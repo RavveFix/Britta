@@ -14,6 +14,8 @@ import './styles/main.css';
 import './styles/components/vat-card.css';
 import './styles/components/voice-input.css';
 import './styles/components/ui.css';
+import './styles/components/artifact-cards.css';
+import './styles/components/memory.css';
 
 logger.debug('main.ts module loading...');
 

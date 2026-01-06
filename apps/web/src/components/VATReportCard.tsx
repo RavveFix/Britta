@@ -1,5 +1,6 @@
 import { FunctionComponent } from 'preact';
-import type { VATReportData, ValidationResult, VATSummary, SalesTransaction, CostTransaction } from '../types/vat';
+import type { VATReportData, ValidationResult, VATSummary, SalesTransaction, CostTransaction, ZeroVATWarning, JournalEntry } from '../types/vat';
+import { BAS_ACCOUNT_INFO } from '../types/vat';
 import { generateExcelFile, copyReportToClipboard } from '../utils/excelExport';
 import { useState } from 'preact/hooks';
 
@@ -111,6 +112,17 @@ export const VATReportCard: FunctionComponent<VATReportCardProps> = ({ data }) =
                 </div>
             </details>
 
+            {/* Journal Entries with BAS tooltips */}
+            <details class="transactions-section">
+                <summary>Bokföringsförslag ({data.journal_entries.length} poster)</summary>
+                <div class="journal-entries-list">
+                    <JournalEntriesList entries={data.journal_entries} />
+                </div>
+            </details>
+
+            {/* Warnings Panel */}
+            <WarningsPanel validation={data.validation} />
+
             {/* Action Buttons */}
             <div class="action-buttons">
                 <button
@@ -219,3 +231,127 @@ const TransactionsList: FunctionComponent<{
         </>
     );
 };
+
+/**
+ * Journal entries list with BAS account tooltips
+ */
+const JournalEntriesList: FunctionComponent<{
+    entries: JournalEntry[]
+}> = ({ entries }) => {
+    if (!entries || entries.length === 0) {
+        return <div class="no-transactions">Inga bokföringsförslag</div>;
+    }
+
+    return (
+        <div class="journal-entries">
+            <div class="journal-header">
+                <span>Konto</span>
+                <span>Namn</span>
+                <span>Debet</span>
+                <span>Kredit</span>
+            </div>
+            {entries.map((entry, index) => (
+                <div key={index} class="journal-row">
+                    <span
+                        class="account-with-tooltip"
+                        title={BAS_ACCOUNT_INFO[entry.account] || entry.name}
+                    >
+                        {entry.account}
+                        {BAS_ACCOUNT_INFO[entry.account] && <span class="tooltip-icon">i</span>}
+                    </span>
+                    <span class="journal-name">{entry.name}</span>
+                    <span class="journal-debit">
+                        {entry.debit > 0 ? entry.debit.toFixed(2) : '-'}
+                    </span>
+                    <span class="journal-credit">
+                        {entry.credit > 0 ? entry.credit.toFixed(2) : '-'}
+                    </span>
+                </div>
+            ))}
+        </div>
+    );
+};
+
+/**
+ * Warnings panel component
+ */
+const WarningsPanel: FunctionComponent<{ validation: ValidationResult }> = ({ validation }) => {
+    const zeroVatWarnings = validation?.zero_vat_warnings || [];
+    const hasWarnings = (validation?.warnings?.length || 0) > 0 || zeroVatWarnings.length > 0;
+    const hasErrors = (validation?.errors?.length || 0) > 0;
+
+    if (!hasWarnings && !hasErrors) return null;
+
+    // Group zero VAT warnings by level
+    const grouped = {
+        error: zeroVatWarnings.filter(w => w.level === 'error'),
+        warning: zeroVatWarnings.filter(w => w.level === 'warning'),
+        info: zeroVatWarnings.filter(w => w.level === 'info')
+    };
+
+    return (
+        <div class="warnings-panel">
+            <h4>Granskningsresultat</h4>
+
+            {/* Validation errors */}
+            {hasErrors && (
+                <div class="warning-section error">
+                    <h5>Fel ({validation.errors.length})</h5>
+                    {validation.errors.map((err, i) => (
+                        <div key={i} class="warning-item error">
+                            <p>{typeof err === 'string' ? err : JSON.stringify(err)}</p>
+                        </div>
+                    ))}
+                </div>
+            )}
+
+            {/* Zero VAT warnings */}
+            {grouped.warning.length > 0 && (
+                <div class="warning-section warning">
+                    <h5>Varningar ({grouped.warning.length})</h5>
+                    {grouped.warning.map((w, i) => (
+                        <WarningItem key={i} warning={w} />
+                    ))}
+                </div>
+            )}
+
+            {/* Zero VAT info */}
+            {grouped.info.length > 0 && (
+                <div class="warning-section info">
+                    <h5>Information ({grouped.info.length})</h5>
+                    {grouped.info.map((w, i) => (
+                        <WarningItem key={i} warning={w} />
+                    ))}
+                </div>
+            )}
+
+            {/* General warnings */}
+            {(validation?.warnings?.length || 0) > 0 && (
+                <div class="warning-section warning">
+                    <h5>Beräkningsvarningar ({validation.warnings.length})</h5>
+                    {validation.warnings.map((warn, i) => (
+                        <div key={i} class="warning-item warning">
+                            <p>{typeof warn === 'string' ? warn : JSON.stringify(warn)}</p>
+                        </div>
+                    ))}
+                </div>
+            )}
+        </div>
+    );
+};
+
+/**
+ * Individual warning item component
+ */
+const WarningItem: FunctionComponent<{ warning: ZeroVATWarning }> = ({ warning }) => (
+    <div class={`warning-item ${warning.level}`}>
+        <span class="warning-code">{warning.code}</span>
+        <p>{warning.message}</p>
+        {warning.suggestion && (
+            <p class="suggestion">{warning.suggestion}</p>
+        )}
+        {warning.transaction_id && (
+            <span class="transaction-ref">ID: {warning.transaction_id}</span>
+        )}
+    </div>
+);

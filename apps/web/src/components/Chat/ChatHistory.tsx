@@ -5,8 +5,39 @@ import type { Database } from '../../types/supabase';
 import { FetchErrorFallback } from '../ErrorBoundary';
 import type { VATReportData } from '../../types/vat';
 import { AIResponseRenderer, UserMessageRenderer } from './AIResponseRenderer';
+import { StreamingText } from './StreamingText';
+import { UpgradeModal } from '../UpgradeModal';
 
 type Message = Database['public']['Tables']['messages']['Row'];
+
+// Animated thinking text with character cascade effect
+const AnimatedThinkingText: FunctionComponent = () => {
+    const text = 'Britta tänker';
+    const dots = '...';
+
+    return (
+        <span class="thinking-label">
+            {text.split('').map((char, i) => (
+                <span
+                    class="thinking-char"
+                    style={{ animationDelay: `${i * 0.05}s` }}
+                >
+                    {char === ' ' ? '\u00A0' : char}
+                </span>
+            ))}
+            <span class="thinking-dots">
+                {dots.split('').map((dot, i) => (
+                    <span
+                        class="thinking-dot"
+                        style={{ animationDelay: `${(text.length + i) * 0.05}s` }}
+                    >
+                        {dot}
+                    </span>
+                ))}
+            </span>
+        </span>
+    );
+};
 
 interface ChatHistoryProps {
     conversationId: string | null;
@@ -21,17 +52,22 @@ type RateLimitInfo = {
 export const ChatHistory: FunctionComponent<ChatHistoryProps> = ({ conversationId }) => {
     // All hooks must be at the top, before any conditional returns
     const [messages, setMessages] = useState<Message[]>([]);
-    const [loading, setLoading] = useState(true);
+    const [isInitialLoad, setIsInitialLoad] = useState(true);
     const [fetchError, setFetchError] = useState<string | null>(null);
     const [optimisticMessages, setOptimisticMessages] = useState<Message[]>([]);
     const [isThinking, setIsThinking] = useState(false);
     const [thinkingTimeout, setThinkingTimeout] = useState(false);
     const [errorMessage, setErrorMessage] = useState<string | null>(null);
     const [rateLimitInfo, setRateLimitInfo] = useState<RateLimitInfo | null>(null);
+    const [showUpgradeModal, setShowUpgradeModal] = useState(false);
     const [showScrollButton, setShowScrollButton] = useState(false);
+    const [streamingMessage, setStreamingMessage] = useState<string | null>(null);
     const bottomRef = useRef<HTMLDivElement>(null);
     const containerRef = useRef<HTMLDivElement>(null);
     const currentChannelRef = useRef<any>(null);
+    // Streaming debounce refs
+    const streamingBufferRef = useRef<string>('');
+    const debounceTimerRef = useRef<number | null>(null);
 
     // Date formatting helper
     const formatDateSeparator = (dateStr: string): string => {
@@ -55,13 +91,17 @@ export const ChatHistory: FunctionComponent<ChatHistoryProps> = ({ conversationI
     const fetchMessages = async () => {
         if (!conversationId) {
             setMessages([]);
-            setLoading(false);
-            // Dispatch event for welcome state (no messages)
-            window.dispatchEvent(new CustomEvent('chat-messages-loaded', { detail: { count: 0 } }));
+            setIsInitialLoad(false);
+            window.dispatchEvent(new CustomEvent('chat-messages-loaded', {
+                detail: {
+                    count: 0,
+                    conversationId
+                }
+            }));
             return;
         }
 
-        setLoading(true);
+        // Loading is tracked via isInitialLoad
         setFetchError(null);
         try {
             const { data, error } = await supabase
@@ -73,20 +113,25 @@ export const ChatHistory: FunctionComponent<ChatHistoryProps> = ({ conversationI
             if (error) throw error;
             setMessages(data || []);
             // Dispatch event for welcome state toggle
-            window.dispatchEvent(new CustomEvent('chat-messages-loaded', { detail: { count: (data || []).length } }));
+            window.dispatchEvent(new CustomEvent('chat-messages-loaded', {
+                detail: {
+                    count: (data || []).length,
+                    conversationId
+                }
+            }));
         } catch (error) {
             const errorMsg = error instanceof Error ? error.message : 'Kunde inte ladda meddelanden';
             console.error('Error fetching messages:', error);
             setFetchError(errorMsg);
         } finally {
-            setLoading(false);
+            setIsInitialLoad(false);
         }
     };
 
     useEffect(() => {
         fetchMessages();
 
-        // Keep chat-refresh for backwards compatibility (optimistic updates, etc.)
+        // Silent refresh to avoid skeleton flicker
         const handleRefresh = () => fetchMessages();
         window.addEventListener('chat-refresh', handleRefresh);
 
@@ -119,8 +164,12 @@ export const ChatHistory: FunctionComponent<ChatHistoryProps> = ({ conversationI
                     if (prev.some(m => m.id === newMsg.id)) return prev;
                     return [...prev, newMsg];
                 });
-                // Clear thinking state when AI responds
-                setIsThinking(false);
+                // Clear thinking/streaming state when AI responds
+                const newMsg = payload.new as Message;
+                if (newMsg.role === 'assistant') {
+                    setIsThinking(false);
+                    setStreamingMessage(null); // Clear streaming content now that DB message exists
+                }
                 setOptimisticMessages([]);
             })
             .subscribe();
@@ -137,10 +186,21 @@ export const ChatHistory: FunctionComponent<ChatHistoryProps> = ({ conversationI
         };
     }, [conversationId]);
 
+    // Unified scroll-to-bottom logic (Sticky Scroll) - optimized with RAF
     useEffect(() => {
-        // Scroll to bottom on new messages
-        bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
-    }, [messages]);
+        if (!containerRef.current) return;
+
+        requestAnimationFrame(() => {
+            if (!containerRef.current) return;
+            const { scrollTop, scrollHeight, clientHeight } = containerRef.current;
+            const isAtBottom = scrollHeight - scrollTop - clientHeight < 150;
+
+            // Auto-scroll if we are already at bottom or if it's a new user message
+            if (isAtBottom || optimisticMessages.length > 0) {
+                bottomRef.current?.scrollIntoView({ behavior: isInitialLoad ? 'auto' : 'smooth' });
+            }
+        });
+    }, [messages, optimisticMessages, isInitialLoad]); // Removed streamingMessage - scroll handled separately
 
     // Handle optimistic messages (must be before conditional returns)
     useEffect(() => {
@@ -156,6 +216,14 @@ export const ChatHistory: FunctionComponent<ChatHistoryProps> = ({ conversationI
                 metadata: null,
                 created_at: new Date().toISOString()
             };
+            // CRITICAL: Reset streaming state BEFORE adding new message
+            // This prevents new AI responses from being appended to previous ones
+            if (debounceTimerRef.current) {
+                clearTimeout(debounceTimerRef.current);
+                debounceTimerRef.current = null;
+            }
+            streamingBufferRef.current = '';
+            setStreamingMessage(null);
             setOptimisticMessages(prev => [...prev, tempMessage]);
             setIsThinking(true);
             setErrorMessage(null);
@@ -183,24 +251,63 @@ export const ChatHistory: FunctionComponent<ChatHistoryProps> = ({ conversationI
         const handleRateLimit = (e: CustomEvent<RateLimitInfo>) => {
             setIsThinking(false);
             setErrorMessage(null);
-            setRateLimitInfo({
+            setStreamingMessage(null);
+            const rateLimitData = {
                 remaining: typeof e.detail?.remaining === 'number' ? e.detail.remaining : 0,
                 resetAt: typeof e.detail?.resetAt === 'string' ? e.detail.resetAt : null,
                 message: typeof e.detail?.message === 'string' ? e.detail.message : null
-            });
+            };
+            setRateLimitInfo(rateLimitData);
+
+            // Dispatch global event so ChatController can disable the input
+            window.dispatchEvent(new CustomEvent('rate-limit-active', { detail: rateLimitData }));
+        };
+
+        const handleStreamingChunk = (e: CustomEvent<{ chunk: string; isNewResponse?: boolean }>) => {
+            console.log('📥 [ChatHistory] Received chunk:', e.detail.chunk?.substring(0, 50));
+            setIsThinking(false); // Hide typing indicator once text starts
+
+            if (e.detail.isNewResponse) {
+                // New response - reset buffer and update immediately
+                streamingBufferRef.current = e.detail.chunk;
+                setStreamingMessage(e.detail.chunk);
+            } else {
+                // Append to buffer
+                streamingBufferRef.current += e.detail.chunk;
+
+                // Debounce state updates (50ms) for smoother rendering
+                if (debounceTimerRef.current) {
+                    clearTimeout(debounceTimerRef.current);
+                }
+                debounceTimerRef.current = window.setTimeout(() => {
+                    setStreamingMessage(streamingBufferRef.current);
+                    debounceTimerRef.current = null;
+                }, 50);
+            }
         };
 
         window.addEventListener('chat-rate-limit', handleRateLimit as EventListener);
-        return () => window.removeEventListener('chat-rate-limit', handleRateLimit as EventListener);
+        window.addEventListener('chat-streaming-chunk', handleStreamingChunk as EventListener);
+        return () => {
+            window.removeEventListener('chat-rate-limit', handleRateLimit as EventListener);
+            window.removeEventListener('chat-streaming-chunk', handleStreamingChunk as EventListener);
+        };
     }, []);
 
     // Clear optimistic messages when real messages are fetched (must be before conditional returns)
     useEffect(() => {
         if (messages.length > 0) {
             setOptimisticMessages([]);
-            setIsThinking(false);
             setThinkingTimeout(false);
-            setRateLimitInfo(null);
+            // Note: rateLimitInfo is NOT cleared here - it should persist until user dismisses the banner
+
+            // Only clear streaming when AI response is actually in the database
+            // This prevents race condition where fetchMessages() returns old data
+            const lastMsg = messages[messages.length - 1];
+            if (lastMsg?.role === 'assistant') {
+                setIsThinking(false);
+                setStreamingMessage(null);
+            }
         }
     }, [messages]);
 
@@ -217,8 +324,8 @@ export const ChatHistory: FunctionComponent<ChatHistoryProps> = ({ conversationI
         }
     }, [isThinking]);
 
-    // Handle loading state - show skeleton
-    if (loading) {
+    // Handle loading state - only show skeleton on initial load
+    if (isInitialLoad) {
         return (
             <div class="chat-loading-skeleton">
                 {/* Skeleton messages */}
@@ -250,6 +357,13 @@ export const ChatHistory: FunctionComponent<ChatHistoryProps> = ({ conversationI
     const handleRetry = () => {
         setIsThinking(false);
         setThinkingTimeout(false);
+        // Clean up streaming state
+        if (debounceTimerRef.current) {
+            clearTimeout(debounceTimerRef.current);
+            debounceTimerRef.current = null;
+        }
+        streamingBufferRef.current = '';
+        setStreamingMessage(null);
         setOptimisticMessages([]);
         window.dispatchEvent(new CustomEvent('chat-retry'));
     };
@@ -285,20 +399,30 @@ export const ChatHistory: FunctionComponent<ChatHistoryProps> = ({ conversationI
 
             {rateLimitInfo && (
                 <div class="rate-limit-banner" role="status" aria-live="polite">
-                    <div class="rate-limit-banner__icon" aria-hidden="true">429</div>
+                    <div class="rate-limit-banner__icon" aria-hidden="true">⚡</div>
                     <div class="rate-limit-banner__content">
                         <div class="rate-limit-banner__title">
-                            Du har {rateLimitInfo.remaining} kvar{resetTime ? `, reset kl ${resetTime}` : ''}
+                            Gräns nådd{resetTime ? ` – återställs kl ${resetTime}` : ''}
                         </div>
-                        {rateLimitInfo.message && (
-                            <div class="rate-limit-banner__subtitle">{rateLimitInfo.message}</div>
-                        )}
+                        <div class="rate-limit-banner__subtitle">
+                            Uppgradera till Pro för fler förfrågningar
+                        </div>
                     </div>
+                    <button
+                        type="button"
+                        class="rate-limit-banner__upgrade"
+                        onClick={() => setShowUpgradeModal(true)}
+                    >
+                        Uppgradera
+                    </button>
                     <button
                         type="button"
                         class="rate-limit-banner__close"
                         aria-label="Stäng"
-                        onClick={() => setRateLimitInfo(null)}
+                        onClick={() => {
+                            setRateLimitInfo(null);
+                            window.dispatchEvent(new CustomEvent('rate-limit-cleared'));
+                        }}
                     >
                         ×
                     </button>
@@ -320,7 +444,7 @@ export const ChatHistory: FunctionComponent<ChatHistoryProps> = ({ conversationI
                             {msg.role === 'user' ? (
                                 <div class="avatar">Du</div>
                             ) : (
-                                <div class="britta-orb" style={{ width: '32px', height: '32px', margin: '4px' }}></div>
+                                <div class="chat-orb chat-avatar-orb"></div>
                             )}
                             <div class="bubble">
                                 {msg.role === 'user' ? (
@@ -342,23 +466,27 @@ export const ChatHistory: FunctionComponent<ChatHistoryProps> = ({ conversationI
                 );
             })}
 
-            {isThinking && (
+            {(isThinking || streamingMessage) && (
                 <div class="message ai-message thinking-message">
-                    <div class="britta-orb thinking" style={{ width: '32px', height: '32px', margin: '4px' }}></div>
-                    <div class="bubble thinking-bubble">
-                        {thinkingTimeout ? (
+                    <div
+                        class="chat-orb thinking chat-avatar-orb"
+                    ></div>
+                    {streamingMessage ? (
+                        <div class="bubble thinking-bubble">
+                            <StreamingText content={streamingMessage} />
+                        </div>
+                    ) : thinkingTimeout ? (
+                        <div class="bubble thinking-bubble">
                             <div class="thinking-timeout">
                                 <p>Det tar längre tid än vanligt...</p>
                                 <button class="retry-btn" onClick={handleRetry}>Försök igen</button>
                             </div>
-                        ) : (
-                            <div class="typing-indicator">
-                                <span class="typing-dot"></span>
-                                <span class="typing-dot"></span>
-                                <span class="typing-dot"></span>
-                            </div>
-                        )}
-                    </div>
+                        </div>
+                    ) : (
+                        <div class="thinking-status" role="status" aria-live="polite">
+                            <AnimatedThinkingText />
+                        </div>
+                    )}
                 </div>
             )}
             {errorMessage && (
@@ -381,6 +509,14 @@ export const ChatHistory: FunctionComponent<ChatHistoryProps> = ({ conversationI
                     <polyline points="6 9 12 15 18 9"></polyline>
                 </svg>
             </button>
+
+            {/* Upgrade Modal */}
+            {showUpgradeModal && (
+                <UpgradeModal
+                    onClose={() => setShowUpgradeModal(false)}
+                    resetTime={resetTime}
+                />
+            )}
         </div>
     );
 };

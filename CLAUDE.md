@@ -8,8 +8,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **Tech Stack:**
 - Frontend: Vite + TypeScript (vanilla, class-based components)
-- Backend: Supabase Edge Functions (Deno) + Python FastAPI (Railway)
-- AI: Google Gemini (chat/PDF), Claude (fallback), Python (VAT calculations)
+- Backend: Supabase Edge Functions (Deno)
+- AI: Google Gemini (chat/PDF), OpenAI (column mapping), Claude (fallback)
 - Integrations: Fortnox API for accounting operations
 - Database: Supabase PostgreSQL with RLS
 
@@ -22,9 +22,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 /dev-start
 
 # Or manually:
-npm run dev                                    # Frontend (Vite :5173)
-cd python-api && uvicorn app.main:app --reload # Python API (:8080)
-npm run supabase:start                         # Supabase services
+npm run dev               # Frontend (Vite :5173)
+npm run supabase:start    # Supabase services
 
 # Check status
 /dev-status
@@ -65,14 +64,18 @@ Text → gemini-chat → Gemini AI
 
 ### Edge Functions
 - `gemini-chat` - Main chat, PDF analysis
-- `analyze-excel-ai` - Excel analysis (Monta: deterministic, Other: Claude AI)
-- `python-proxy` - VAT calculations proxy (legacy)
+- `analyze-excel-ai` - Excel analysis (Monta: deterministic, Other: OpenAI mapping)
 - `fortnox` - Accounting operations
 
 ### Services
 - `GeminiService` - AI interactions
 - `FortnoxService` - Fortnox API
 - `RateLimiterService` - Usage limits (10/hour, 50/day)
+- `SwedishRounding` - Öresavrundning (ROUND_HALF_UP)
+- `SwedishValidation` - Org.nr/VAT validering (Luhn)
+- `ZeroVATValidator` - ML 3:30a compliance
+- `BASAccounts` - Kontoplan + intelligent routing
+- `JournalService` - Verifikations-ID (BFL 7:1) + journalposter
 
 ---
 
@@ -81,17 +84,10 @@ Text → gemini-chat → Gemini AI
 ### Supabase Secrets
 ```bash
 supabase secrets set GEMINI_API_KEY=...
-supabase secrets set PYTHON_API_URL=https://your-railway-app.railway.app
-supabase secrets set PYTHON_API_KEY=...
+supabase secrets set OPENAI_API_KEY=...  # For column mapping
 supabase secrets set FORTNOX_CLIENT_ID=...
 supabase secrets set FORTNOX_CLIENT_SECRET=...
 ```
-
-### Railway (Python API)
-- `ENV=production`
-- `DEBUG=false`
-- `ALLOWED_ORIGINS=https://...`
-- `PYTHON_API_KEY=...`
 
 ### Frontend (.env)
 - `VITE_SUPABASE_URL`
@@ -122,7 +118,7 @@ Custom agents for specialized workflows:
 
 | Agent | Purpose |
 |-------|---------|
-| [VAT Calculator](.claude/agents/vat-calculator.md) | Excel → Python API routing, retry logic |
+| [VAT Calculator](.claude/agents/vat-calculator.md) | Excel → Edge Function routing |
 | [PR Reviewer](.claude/agents/pr-reviewer.md) | Security checks, architectural patterns |
 | [Deployment](.claude/agents/deployment.md) | Multi-service deployment orchestration |
 
@@ -151,12 +147,13 @@ Development workflow commands:
 
 ## Current Status
 
-- [x] Python API deployed (Railway)
 - [x] Edge Functions deployed (Supabase)
 - [x] Security fixes (CORS, timing attacks)
-- [x] Retry logic (Railway cold starts)
 - [x] **Supabase Realtime Sync** (live chat updates)
 - [x] **Monta Deterministic Parser** (100% accuracy for EV charging)
+- [x] **Swedish Accounting Services** (öresavrundning, BAS-konton, journalposter)
+- [x] **Zero VAT Validation** (ML 3:30a compliance)
+- [x] **Python API removed** (all logic now in Edge Functions)
 - [ ] Production frontend (Vercel)
 - [ ] E2E testing
 

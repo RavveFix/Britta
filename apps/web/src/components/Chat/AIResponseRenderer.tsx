@@ -1,5 +1,7 @@
 import { FunctionComponent } from 'preact';
-import { parseAIResponse, markdownToHtml, containsCodeBlock } from '../../utils/markdownParser';
+import { memo } from 'preact/compat';
+import { useMemo } from 'preact/hooks';
+import { parseAIResponse, markdownToHtml, containsCodeBlock, containsMarkdownTable, parseMarkdownTable } from '../../utils/markdownParser';
 import { ArtifactCard, VATArtifact, CodeArtifact } from './ArtifactCard';
 import type { VATReportData } from '../../types/vat';
 
@@ -16,17 +18,34 @@ interface AIResponseRendererProps {
 
 /**
  * AIResponseRenderer - Intelligently renders AI responses
- * 
+ *
  * Detects structured content (code, tables, file analysis) and renders
  * them as distinct artifact cards while keeping conversational text
  * in a clean text format.
+ *
+ * Memoized to prevent re-parsing on every render during streaming.
  */
-export const AIResponseRenderer: FunctionComponent<AIResponseRendererProps> = ({
+const AIResponseRendererInner: FunctionComponent<AIResponseRendererProps> = ({
     content,
     metadata,
     fileName,
     fileUrl,
 }) => {
+    // Memoize expensive parsing operations
+    const hasStructuredContent = useMemo(
+        () => containsCodeBlock(content) || containsMarkdownTable(content),
+        [content]
+    );
+
+    const parsedBlocks = useMemo(
+        () => hasStructuredContent ? parseAIResponse(content) : null,
+        [content, hasStructuredContent]
+    );
+
+    const htmlContent = useMemo(
+        () => !hasStructuredContent && !metadata?.type ? markdownToHtml(content) : null,
+        [content, hasStructuredContent, metadata?.type]
+    );
     // Check if this is a VAT report response
     if (metadata?.type === 'vat_report' && metadata.data) {
         const vatData = metadata.data;
@@ -62,13 +81,11 @@ export const AIResponseRenderer: FunctionComponent<AIResponseRendererProps> = ({
         );
     }
 
-    // Check for code blocks in the response
-    if (containsCodeBlock(content)) {
-        const blocks = parseAIResponse(content);
-
+    // Check for structured content (code blocks or tables)
+    if (hasStructuredContent && parsedBlocks) {
         return (
             <div class="ai-response">
-                {blocks.map((block, index) => {
+                {parsedBlocks.map((block, index) => {
                     if (block.type === 'code') {
                         return (
                             <CodeArtifact
@@ -77,6 +94,32 @@ export const AIResponseRenderer: FunctionComponent<AIResponseRendererProps> = ({
                                 code={block.content}
                             />
                         );
+                    }
+
+                    if (block.type === 'table') {
+                        const tableHtml = parseMarkdownTable(block.content);
+                        if (tableHtml) {
+                            return (
+                                <ArtifactCard
+                                    key={index}
+                                    type="table"
+                                    title="Datatabell"
+                                    defaultExpanded={true}
+                                    actions={[
+                                        {
+                                            label: 'Kopiera tabell',
+                                            icon: '📋',
+                                            onClick: () => {
+                                                // Simple text copy for table
+                                                navigator.clipboard.writeText(block.content);
+                                            }
+                                        }
+                                    ]}
+                                >
+                                    <div dangerouslySetInnerHTML={{ __html: tableHtml }} />
+                                </ArtifactCard>
+                            );
+                        }
                     }
 
                     return (
@@ -123,14 +166,17 @@ export const AIResponseRenderer: FunctionComponent<AIResponseRendererProps> = ({
         );
     }
 
-    // Default: render as enhanced markdown
+    // Default: render as enhanced markdown (use memoized HTML)
     return (
         <div
             class="ai-response response-text"
-            dangerouslySetInnerHTML={{ __html: markdownToHtml(content) }}
+            dangerouslySetInnerHTML={{ __html: htmlContent || markdownToHtml(content) }}
         />
     );
 };
+
+// Export memoized component to prevent unnecessary re-renders during streaming
+export const AIResponseRenderer = memo(AIResponseRendererInner);
 
 /**
  * UserMessageRenderer - Simple renderer for user messages

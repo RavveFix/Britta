@@ -9,8 +9,11 @@ import { supabase } from '../lib/supabase';
 import { mountPreactComponent } from '../components/preact-adapter';
 import { LegalConsentModal } from '../components/LegalConsentModal';
 import { SettingsModal } from '../components/SettingsModal';
+import { IntegrationsModal } from '../components/IntegrationsModal';
 import { ConversationList } from '../components/Chat/ConversationList';
 import { ExcelWorkspace } from '../components/ExcelWorkspace';
+import { MemoryIndicator } from '../components/MemoryIndicator';
+import { ConversationSearch } from '../components/ConversationSearch';
 import { mountModal } from '../utils/modalHelpers';
 import { initKeyboardShortcuts } from '../hooks/useKeyboardShortcuts';
 
@@ -23,12 +26,17 @@ import { voiceInputController } from '../services/VoiceInputService';
 
 // Controllers
 import { themeController } from './ThemeController';
+import { sidebarController } from './SidebarController';
 import { companyModalController } from './CompanyModalController';
 import { conversationController } from './ConversationController';
 import { chatController } from './ChatController';
 
 export class AppController {
     private excelWorkspace: ExcelWorkspace | null = null;
+    private settingsCleanup: (() => void) | null = null;
+    private integrationsCleanup: (() => void) | null = null;
+    private settingsListenerAttached = false;
+    private integrationsListenerAttached = false;
 
     async init(): Promise<void> {
         logger.debug('AppController.init() starting...');
@@ -73,6 +81,9 @@ export class AppController {
 
         // Setup settings button
         this.setupSettingsButton();
+
+        // Setup integrations button
+        this.setupIntegrationsButton();
 
         // Setup new chat button
         this.setupNewChatButton();
@@ -169,6 +180,9 @@ export class AppController {
         // Theme controller
         themeController.init();
 
+        // Sidebar controller (responsive toggle)
+        sidebarController.init();
+
         // Mount ConversationList in sidebar
         const conversationListContainer = document.getElementById('conversation-list-container');
         if (conversationListContainer) {
@@ -179,7 +193,8 @@ export class AppController {
                     currentConversationId: currentCompany.conversationId || null,
                     onSelectConversation: async (id: string) => {
                         await conversationController.loadConversation(id);
-                    }
+                    },
+                    companyId: currentCompany?.id || null
                 },
                 conversationListContainer
             );
@@ -203,25 +218,45 @@ export class AppController {
         if (this.excelWorkspace) {
             chatController.init(this.excelWorkspace);
         }
+
+        this.mountMemoryComponents();
+    }
+
+    private mountMemoryComponents(): void {
+        const searchRoot = document.getElementById('conversation-search-root');
+        if (searchRoot) {
+            mountPreactComponent(ConversationSearch, {}, searchRoot);
+        }
+
+        const memoryRoot = document.getElementById('memory-indicator-root');
+        if (memoryRoot) {
+            mountPreactComponent(MemoryIndicator, {}, memoryRoot);
+        }
     }
 
     private setupSettingsButton(): void {
         const settingsBtn = document.getElementById('settings-btn');
 
-        if (settingsBtn) {
+        if (settingsBtn && !this.settingsListenerAttached) {
             settingsBtn.addEventListener('click', () => {
-                // Check if modal is stuck
-                const container = document.getElementById('settings-modal-container');
-                if (container && container.childElementCount > 0) {
-                    logger.warn('Cleaning up debris in settings modal container before opening');
-                    container.innerHTML = '';
+                // Clean up previous instance if exists
+                if (this.settingsCleanup) {
+                    logger.debug('Cleaning up previous settings modal instance');
+                    this.settingsCleanup();
+                    this.settingsCleanup = null;
                 }
 
-                const closeSettings = mountModal({
+                // Mount new instance and store cleanup function
+                this.settingsCleanup = mountModal({
                     containerId: 'settings-modal-container',
                     Component: SettingsModal,
                     props: {
-                        onClose: () => closeSettings(),
+                        onClose: () => {
+                            if (this.settingsCleanup) {
+                                this.settingsCleanup();
+                                this.settingsCleanup = null;
+                            }
+                        },
                         onLogout: async () => {
                             await supabase.auth.signOut();
                             window.location.href = '/login';
@@ -229,6 +264,39 @@ export class AppController {
                     }
                 });
             });
+            this.settingsListenerAttached = true;
+            logger.debug('Settings button listener attached');
+        }
+    }
+
+    private setupIntegrationsButton(): void {
+        const integrationsBtn = document.getElementById('integrations-btn');
+
+        if (integrationsBtn && !this.integrationsListenerAttached) {
+            integrationsBtn.addEventListener('click', () => {
+                // Clean up previous instance if exists
+                if (this.integrationsCleanup) {
+                    logger.debug('Cleaning up previous integrations modal instance');
+                    this.integrationsCleanup();
+                    this.integrationsCleanup = null;
+                }
+
+                // Mount new instance and store cleanup function
+                this.integrationsCleanup = mountModal({
+                    containerId: 'integrations-modal-container',
+                    Component: IntegrationsModal,
+                    props: {
+                        onClose: () => {
+                            if (this.integrationsCleanup) {
+                                this.integrationsCleanup();
+                                this.integrationsCleanup = null;
+                            }
+                        }
+                    }
+                });
+            });
+            this.integrationsListenerAttached = true;
+            logger.debug('Integrations button listener attached');
         }
     }
 

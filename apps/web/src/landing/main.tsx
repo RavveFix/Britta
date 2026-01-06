@@ -1,5 +1,7 @@
 import { render } from 'preact';
 import { App } from './App';
+import '../styles/main.css'; // Import shared styles
+
 
 function looksLikeSupabaseAuthCallback(): boolean {
     const search = window.location.search;

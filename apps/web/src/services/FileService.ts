@@ -336,8 +336,11 @@ class FileServiceClass {
 
     /**
      * Upload file to Supabase Storage
+     * @param file - The file to upload
+     * @param bucket - Storage bucket name (default: 'chat-files')
+     * @param companyId - Optional company ID to associate with the file
      */
-    async uploadToStorage(file: File, bucket = 'chat-files'): Promise<string> {
+    async uploadToStorage(file: File, bucket = 'chat-files', companyId?: string): Promise<string> {
         logger.startTimer('file-upload');
 
         try {
@@ -346,10 +349,11 @@ class FileServiceClass {
                 throw new Error('Inte inloggad');
             }
 
-            // Generate unique filename
+            // Generate unique filename with company folder for organization
             const timestamp = Date.now();
             const safeFileName = file.name.replace(/[^a-zA-Z0-9.-]/g, '_');
-            const filePath = `${session.user.id}/${timestamp}_${safeFileName}`;
+            const companyPath = companyId || 'default';
+            const filePath = `${session.user.id}/${companyPath}/${timestamp}_${safeFileName}`;
 
             // Upload to Supabase Storage
             const { data, error } = await supabase.storage
@@ -371,7 +375,8 @@ class FileServiceClass {
             logger.endTimer('file-upload');
             logger.info('File uploaded to storage', {
                 path: data.path,
-                size: file.size
+                size: file.size,
+                companyId: companyId || 'default'
             });
 
             return publicUrl;

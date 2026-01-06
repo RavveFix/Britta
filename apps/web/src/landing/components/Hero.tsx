@@ -1,6 +1,30 @@
 import { supabase } from '../../lib/supabase';
+import { useEffect, useState } from 'preact/hooks';
 
 export function Hero() {
+    const [text, setText] = useState('');
+    const fullText = 'Framtiden';
+    
+    // Dynamic Date Logic
+    const today = new Date();
+    // Previous month for the report
+    const prevMonthDate = new Date(today.getFullYear(), today.getMonth() - 1, 1);
+    const reportDateString = prevMonthDate.toISOString().slice(0, 7); // YYYY-MM
+    
+    // Typing Effect
+    useEffect(() => {
+        let currentIndex = 0;
+        const interval = setInterval(() => {
+            if (currentIndex <= fullText.length) {
+                setText(fullText.slice(0, currentIndex));
+                currentIndex++;
+            } else {
+                clearInterval(interval);
+            }
+        }, 150); // Typing speed
+        return () => clearInterval(interval);
+    }, []);
+
     const handleOpenApp = async (e: MouseEvent) => {
         e.preventDefault();
         const { data: { session } } = await supabase.auth.getSession();
@@ -11,9 +35,21 @@ export function Hero() {
         <section class="hero-section" style="padding: 8rem 0 4rem; text-align: center; position: relative;">
             <div class="container">
                 <div class="fade-in-up">
+                    <div style="display: flex; justify-content: center; margin-bottom: 2rem;">
+                         {/* Interactive Orb with hover effect */}
+                         <div class="britta-orb large thinking interactive-orb"></div>
+                         <style>{`
+                            .interactive-orb { transition: transform 0.3s ease, filter 0.3s ease; cursor: pointer; }
+                            .interactive-orb:hover { transform: scale(1.1); filter: brightness(1.2); }
+                            .cursor-caret { display: inline-block; width: 4px; height: 1em; background: var(--accent-primary); margin-left: 2px; animation: blink 1s step-end infinite; vertical-align: middle; }
+                            @keyframes blink { 50% { opacity: 0; } }
+                         `}</style>
+                    </div>
                     <h1 style="font-size: clamp(3.5rem, 8vw, 6rem); margin-bottom: 1.5rem;">
                         Din AI-ekonom för <br />
-                        <span class="text-gradient-primary">Framtiden</span>
+                        <span class="text-gradient-primary">
+                            {text}<span class="cursor-caret"></span>
+                        </span>
                     </h1>
                     <p style="font-size: 1.25rem; color: var(--text-secondary); max-width: 600px; margin: 0 auto 3rem;">
                         Släpp Excel-kaoset. Ladda upp dina filer och låt Britta analysera, kategorisera och förbereda din bokföring automatiskt.
@@ -85,7 +121,7 @@ export function Hero() {
                                         <div style="font-size: 1.1rem; font-weight: 700; background: linear-gradient(135deg, var(--accent-primary), var(--accent-secondary)); -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text; align-self: flex-start; padding-top: 1.5rem;">Britta</div>
                                         <div class="tech-card">
                                             <div style="position: relative; z-index: 1;">
-                                                <strong style="color: var(--accent-primary); display: block; margin-bottom: 1rem; font-family: 'JetBrains Mono', monospace; letter-spacing: 0.05em; font-size: 0.9rem;">SAMMANFATTNING_2025-10</strong>
+                                                <strong style="color: var(--accent-primary); display: block; margin-bottom: 1rem; font-family: 'JetBrains Mono', monospace; letter-spacing: 0.05em; font-size: 0.9rem;">SAMMANFATTNING_{reportDateString}</strong>
 
                                                 <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; margin-bottom: 1.5rem;">
                                                     <div class="tech-stat float-slow">
