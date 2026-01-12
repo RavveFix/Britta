@@ -122,6 +122,8 @@ h6 {
     -webkit-background-clip: text;
     -webkit-text-fill-color: transparent;
     background-clip: text;
+    line-height: 1.2;
+    padding-bottom: 0.1em;  /* Extra space for descenders with gradient text */
 }
 
 .text-gradient-primary {
@@ -724,6 +726,8 @@ h6 {
     font-size: clamp(2.5rem, 5vw, 3.5rem);
     font-weight: 800;
     margin-bottom: 1rem;
+    line-height: 1.2;
+    padding-bottom: 0.1em;  /* Extra space for descenders with gradient text */
     background: linear-gradient(135deg, var(--text-primary) 0%, var(--text-secondary) 100%);
     -webkit-background-clip: text;
     -webkit-text-fill-color: transparent;

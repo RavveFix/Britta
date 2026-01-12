@@ -39,7 +39,7 @@ export function Memory() {
         <section id="memory" style="padding: 6rem 0; position: relative; overflow: hidden;">
             <div class="container">
                 <div style="text-align: center; margin-bottom: 4rem;">
-                    <h2 class="fade-in-up" style="font-size: 2.5rem; margin-bottom: 1rem; background: linear-gradient(135deg, #fff 0%, rgba(255,255,255,0.7) 100%); -webkit-background-clip: text; -webkit-text-fill-color: transparent;">
+                    <h2 class="fade-in-up" style="font-size: 2.5rem; margin-bottom: 1rem; line-height: 1.2; padding-bottom: 0.1em; background: linear-gradient(135deg, #fff 0%, rgba(255,255,255,0.7) 100%); -webkit-background-clip: text; -webkit-text-fill-color: transparent;">
                         Britta kommer ihåg
                     </h2>
                     <p class="fade-in-up delay-100" style="color: var(--text-secondary); max-width: 600px; margin: 0 auto; font-size: 1.1rem;">
