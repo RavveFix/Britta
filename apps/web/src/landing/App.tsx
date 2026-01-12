@@ -6,6 +6,7 @@ import { HowItWorks } from './components/HowItWorks';
 import { Memory } from './components/Memory';
 import { Pricing } from './components/Pricing';
 import { Testimonials } from './components/Testimonials';
+import { Principles } from './components/Principles';
 import { Footer } from './components/Footer';
 import './styles/landing.css';
 
@@ -42,6 +43,7 @@ export function App() {
                 <Memory />
                 <Pricing />
                 <Testimonials />
+                <Principles />
             </main>
 
             <Footer />

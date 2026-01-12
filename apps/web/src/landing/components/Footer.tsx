@@ -2,31 +2,43 @@
 
 export function Footer() {
     return (
-        <footer style="padding: 4rem 0; text-align: center; border-top: 1px solid var(--glass-border); margin-top: 4rem; background: rgba(0,0,0,0.2); backdrop-filter: blur(10px);">
+        <footer class="landing-footer">
             <div class="container">
-                <div style="display: flex; flex-direction: column; gap: 1.5rem; align-items: center;">
-                    <div style="display: flex; gap: 2rem; justify-content: center;">
-                        <a href="/terms" class="footer-link">Användarvillkor</a>
-                        <a href="/privacy" class="footer-link">Integritetspolicy</a>
-                        <a href="/manifest" class="footer-link">AI Manifest</a>
-                        <a href="mailto:support@britta.ai" class="footer-link">Support</a>
+                <div class="footer-content">
+                    <div class="footer-brand">
+                        <div class="footer-logo">Britta</div>
+                        <p class="footer-tagline">
+                            AI-bokföring för svenska företagare
+                        </p>
                     </div>
-                    <p style="color: var(--text-secondary); font-size: 0.9rem;">
+
+                    <div class="footer-columns">
+                        <div class="footer-col">
+                            <h4>Produkt</h4>
+                            <a href="/app">Kom igång</a>
+                            <a href="/login">Logga in</a>
+                            <a href="mailto:support@britta.ai">Support</a>
+                        </div>
+
+                        <div class="footer-col">
+                            <h4>Juridiskt</h4>
+                            <a href="/terms">Användarvillkor</a>
+                            <a href="/privacy">Integritetspolicy</a>
+                        </div>
+
+                        <div class="footer-col">
+                            <h4>Om Britta</h4>
+                            <a href="/manifest">AI Manifest</a>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="footer-bottom">
+                    <p class="copyright">
                         &copy; {new Date().getFullYear()} Britta AI. Byggd för svenska företagare.
                     </p>
                 </div>
             </div>
-            <style>{`
-                .footer-link {
-                    color: var(--text-secondary);
-                    text-decoration: none;
-                    font-size: 0.9rem;
-                    transition: color 0.2s ease;
-                }
-                .footer-link:hover {
-                    color: var(--accent-primary);
-                }
-            `}</style>
         </footer>
     );
 }
