@@ -112,7 +112,7 @@ h4,
 h5,
 h6 {
     font-family: var(--font-display);
-    line-height: 1.1;
+    line-height: 1.2;  /* Increased from 1.1 to prevent descender clipping (g, y, p) */
     letter-spacing: -0.02em;
     font-weight: 700;
 }
