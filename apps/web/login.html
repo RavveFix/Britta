@@ -69,35 +69,6 @@
         </p>
 
         <form id="login-form" style="text-align: left">
-          <!-- Consent Checkbox -->
-          <div
-            style="margin-bottom: 1.5rem; padding: 1rem; background: rgba(255, 255, 255, 0.02); border: 1px solid var(--glass-border); border-radius: 12px"
-          >
-            <label
-              style="display: flex; align-items: start; gap: 0.75rem; cursor: pointer; user-select: none"
-            >
-              <input
-                type="checkbox"
-                id="consent-checkbox"
-                style="margin-top: 0.25rem; width: 1.1rem; height: 1.1rem; cursor: pointer; accent-color: var(--accent-primary)"
-              >
-              <span
-                style="color: var(--text-secondary); font-size: 0.85rem; line-height: 1.5"
-              >
-                Jag godkänner <a
-                  href="/terms.html"
-                  target="_blank"
-                  style="color: var(--accent-primary); text-decoration: underline"
-                >användarvillkoren</a>
-                och <a
-                  href="/privacy.html"
-                  target="_blank"
-                  style="color: var(--accent-primary); text-decoration: underline"
-                >integritetspolicyn</a>
-              </span>
-            </label>
-          </div>
-
           <div class="input-group">
             <label for="full-name" style="margin-left: 0.25rem; font-family: 'Satoshi', sans-serif; font-weight: 500"
             >Fullständigt namn</label>
@@ -108,8 +79,7 @@
               placeholder="T.ex. Anna Andersson"
               required
               autocomplete="name"
-              disabled
-              style="opacity: 0.5; cursor: not-allowed; font-family: 'Inter', sans-serif"
+              style="font-family: 'Inter', sans-serif"
             >
           </div>
 
@@ -122,8 +92,7 @@
               placeholder="namn@foretag.se"
               required
               autocomplete="email"
-              disabled
-              style="opacity: 0.5; cursor: not-allowed; font-family: 'Inter', sans-serif"
+              style="font-family: 'Inter', sans-serif"
             >
           </div>
 
@@ -132,10 +101,19 @@
             class="btn btn-primary btn-glow"
             id="submit-btn"
             style="width: 100%; border-radius: 12px; margin-top: 1rem; font-family: 'Satoshi', sans-serif; font-weight: 600; padding: 0.875rem 1.5rem; font-size: 1rem"
-            disabled
           >
-            Skicka inloggningslänk
+            Kom igång med Britta
           </button>
+
+          <!-- Consent text (click-through consent) -->
+          <p
+            style="margin-top: 1rem; font-size: 0.8rem; color: var(--text-secondary); text-align: center; line-height: 1.5"
+          >
+            Genom att fortsätta godkänner du våra
+            <a href="/terms.html" target="_blank" style="color: var(--accent-primary); text-decoration: underline">användarvillkor</a>
+            och
+            <a href="/privacy.html" target="_blank" style="color: var(--accent-primary); text-decoration: underline">integritetspolicy</a>.
+          </p>
         </form>
 
         <div id="message" class="message-box"></div>

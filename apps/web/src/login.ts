@@ -69,38 +69,13 @@ async function initLogin() {
     const emailInput = document.getElementById('email') as HTMLInputElement;
     const messageEl = document.getElementById('message') as HTMLDivElement;
     const submitBtn = document.getElementById('submit-btn') as HTMLButtonElement;
-    const consentCheckbox = document.getElementById('consent-checkbox') as HTMLInputElement;
 
     if (!loginForm) {
         logger.error('Login form not found!');
         return;
     }
 
-    // Enable email field and submit button when checkbox is checked
-    consentCheckbox?.addEventListener('change', () => {
-        const isChecked = consentCheckbox.checked;
-        fullNameInput.disabled = !isChecked;
-        emailInput.disabled = !isChecked;
-        submitBtn.disabled = !isChecked;
-
-        if (isChecked) {
-            fullNameInput.style.opacity = '1';
-            fullNameInput.style.cursor = 'text';
-            emailInput.style.opacity = '1';
-            emailInput.style.cursor = 'text';
-            submitBtn.style.opacity = '1';
-            submitBtn.style.cursor = 'pointer';
-        } else {
-            fullNameInput.style.opacity = '0.5';
-            fullNameInput.style.cursor = 'not-allowed';
-            emailInput.style.opacity = '0.5';
-            emailInput.style.cursor = 'not-allowed';
-            submitBtn.style.opacity = '0.5';
-            submitBtn.style.cursor = 'not-allowed';
-        }
-    });
-
-    // Handle form submission
+    // Handle form submission (click-through consent - no checkbox needed)
     loginForm.addEventListener('submit', async (e) => {
         e.preventDefault();
         logger.debug('Login form submitted');
@@ -109,20 +84,7 @@ async function initLogin() {
         const email = emailInput.value.trim();
         logger.debug('Login form data', { email, hasFullName: fullName.length > 0 });
 
-        if (!email) {
-            logger.warn('No email entered');
-            return;
-        }
-
-        if (!consentCheckbox.checked) {
-            logger.warn('Consent not checked');
-            if (messageEl) {
-                messageEl.textContent = 'Du måste godkänna villkoren för att fortsätta.';
-                messageEl.classList.add('error');
-            }
-            return;
-        }
-
+        // Validate inputs
         if (!fullName) {
             logger.warn('No full name entered');
             if (messageEl) {
@@ -132,7 +94,17 @@ async function initLogin() {
             return;
         }
 
-        // Save consent to localStorage
+        if (!email) {
+            logger.warn('No email entered');
+            if (messageEl) {
+                messageEl.textContent = 'Vänligen ange din e-postadress.';
+                messageEl.classList.add('error');
+            }
+            return;
+        }
+
+        // Save pending registration to localStorage (will sync to DB after magic link callback)
+        // Click-through consent: by submitting, user accepts terms
         localStorage.setItem('has_accepted_terms_local', 'true');
         localStorage.setItem('user_full_name_local', fullName);
         localStorage.setItem('terms_accepted_at_local', new Date().toISOString());
@@ -197,7 +169,7 @@ async function performLogin(email: string, messageEl: HTMLDivElement, submitBtn:
         // Re-enable button
         if (submitBtn) {
             submitBtn.disabled = false;
-            submitBtn.textContent = 'Skicka inloggningslänk';
+            submitBtn.textContent = 'Kom igång med Britta';
         }
     }
 }

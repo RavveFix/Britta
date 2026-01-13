@@ -1,7 +1,6 @@
 import { useEffect, useState } from 'preact/hooks';
 import { supabase } from '../lib/supabase';
 import { CURRENT_TERMS_VERSION, getVersionChanges, getVersionsSince } from '../constants/termsVersion';
-import { authService } from '../services/AuthService';
 import { logger } from '../services/LoggerService';
 
 interface LegalConsentModalProps {
@@ -9,32 +8,41 @@ interface LegalConsentModalProps {
     mode?: 'authenticated' | 'local';
 }
 
+/**
+ * LegalConsentModal - Re-consent modal for updated terms
+ *
+ * This modal is ONLY shown when a user needs to re-accept updated terms.
+ * New users accept terms via click-through consent on the login page.
+ *
+ * Pattern: Full-screen overlay with centered card (same as SettingsModal)
+ */
 export function LegalConsentModal({ onAccepted, mode = 'authenticated' }: LegalConsentModalProps) {
     const [isAccepting, setIsAccepting] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const [fullName, setFullName] = useState('');
-    const [touched, setTouched] = useState(false);
     const [previousTermsVersion, setPreviousTermsVersion] = useState<string | null>(null);
+    const [isLoading, setIsLoading] = useState(true);
 
-    // Check for prior local consent (from login checkbox)
-    const localConsent = typeof localStorage !== 'undefined' ? localStorage.getItem('has_accepted_terms_local') : null;
-    const localTimestamp = typeof localStorage !== 'undefined' ? localStorage.getItem('terms_accepted_at_local') : null;
-
-    // If we have local consent, we are just collecting the name for the profile
-    const isProfileCompletion = mode === 'authenticated' && localConsent === 'true';
-
+    // Name is always valid if we have it from DB (re-consent scenario)
     const isValid = fullName.trim().length > 0;
 
     // Prefill name and capture previous terms version for re-consent UX
     useEffect(() => {
-        if (mode !== 'authenticated') return;
+        if (mode !== 'authenticated') {
+            setIsLoading(false);
+            return;
+        }
 
         let cancelled = false;
 
         (async () => {
             try {
+                logger.debug('LegalConsentModal: Fetching user profile...');
                 const { data: { user } } = await supabase.auth.getUser();
-                if (!user || cancelled) return;
+                if (!user || cancelled) {
+                    setIsLoading(false);
+                    return;
+                }
 
                 const { data: profile } = await supabase
                     .from('profiles')
@@ -42,16 +50,25 @@ export function LegalConsentModal({ onAccepted, mode = 'authenticated' }: LegalC
                     .eq('id', user.id)
                     .single();
 
-                if (cancelled || !profile) return;
+                if (cancelled) return;
 
-                setPreviousTermsVersion(profile.terms_version ?? null);
+                if (profile) {
+                    logger.debug('LegalConsentModal: Profile loaded', {
+                        hasName: !!profile.full_name,
+                        termsVersion: profile.terms_version
+                    });
+                    setPreviousTermsVersion(profile.terms_version ?? null);
 
-                // Only prefill if user hasn't started typing
-                if (!fullName && profile.full_name) {
-                    setFullName(profile.full_name);
+                    if (profile.full_name) {
+                        setFullName(profile.full_name);
+                    }
                 }
-            } catch {
-                // Non-blocking; modal still works without prefill
+            } catch (err) {
+                logger.warn('LegalConsentModal: Failed to fetch profile', err);
+            } finally {
+                if (!cancelled) {
+                    setIsLoading(false);
+                }
             }
         })();
 
@@ -60,19 +77,14 @@ export function LegalConsentModal({ onAccepted, mode = 'authenticated' }: LegalC
         };
     }, [mode]);
 
-    const isReconsent =
-        mode === 'authenticated' &&
-        !!previousTermsVersion &&
-        previousTermsVersion !== CURRENT_TERMS_VERSION;
+    // This modal is only shown for re-consent, so we always have a previous version
+    const isReconsent = mode === 'authenticated' && !!previousTermsVersion;
 
     const versionsSince = isReconsent ? getVersionsSince(previousTermsVersion) : [];
-    const majorChanges = isReconsent
-        ? versionsSince.flatMap((v) => getVersionChanges(v)).filter(Boolean)
-        : [];
+    const majorChanges = versionsSince.flatMap((v) => getVersionChanges(v)).filter(Boolean);
 
     const handleAccept = async () => {
         if (!isValid) {
-            setTouched(true);
             return;
         }
 
@@ -91,12 +103,9 @@ export function LegalConsentModal({ onAccepted, mode = 'authenticated' }: LegalC
                     throw new Error('Ingen användare inloggad');
                 }
 
-                // Use original timestamp if available (Audit Trail Integrity), otherwise now
-                const acceptedAt = (isProfileCompletion && localTimestamp)
-                    ? localTimestamp
-                    : new Date().toISOString();
+                const acceptedAt = new Date().toISOString();
 
-                // Update profile
+                // Update profile with new terms version
                 const { error: updateError } = await supabase
                     .from('profiles')
                     .upsert({
@@ -109,55 +118,22 @@ export function LegalConsentModal({ onAccepted, mode = 'authenticated' }: LegalC
 
                 if (updateError) throw updateError;
 
-                // Clear any local consent so it can't leak across users/devices
-                authService.clearLocalConsent();
+                logger.info('LegalConsentModal: Terms accepted, version updated to', CURRENT_TERMS_VERSION);
 
-                // Send consent confirmation email with retry logic (non-blocking)
-                const sendEmailWithRetry = async (maxRetries = 3) => {
-                    for (let attempt = 1; attempt <= maxRetries; attempt++) {
-                        try {
-                            logger.debug('Sending consent confirmation email', { attempt, maxRetries });
-                            const { error: emailError } = await supabase.functions.invoke('send-consent-email', {
-                                body: {
-                                    userId: user.id,
-                                    email: user.email,
-                                    fullName: fullName.trim(),
-                                    termsVersion: CURRENT_TERMS_VERSION,
-                                    acceptedAt: acceptedAt
-                                }
-                            });
-
-                            if (emailError) {
-                                throw emailError;
-                            }
-
-                            logger.debug('Consent confirmation email sent');
-                            return true;
-                        } catch (emailError: unknown) {
-                            logger.warn('Consent email attempt failed', { attempt, maxRetries, error: emailError });
-
-                            // If last attempt, log critical error for admin monitoring
-                            if (attempt === maxRetries) {
-                                logger.warn('Failed to send consent email after all retries', { attempt, maxRetries, error: emailError });
-                                // In production, this should trigger an alert to admins
-                                return false;
-                            }
-
-                            // Wait before retry (exponential backoff: 1s, 2s)
-                            const delayMs = 1000 * Math.pow(2, attempt - 1);
-                            await new Promise(resolve => setTimeout(resolve, delayMs));
-                        }
+                // Send re-consent confirmation email (non-blocking)
+                supabase.functions.invoke('send-consent-email', {
+                    body: {
+                        userId: user.id,
+                        email: user.email,
+                        fullName: fullName.trim(),
+                        termsVersion: CURRENT_TERMS_VERSION,
+                        acceptedAt: acceptedAt
                     }
-                    return false;
-                };
-
-                // Send email asynchronously (don't block user)
-                sendEmailWithRetry().catch(err => {
-                    logger.warn('Unexpected error in sendEmailWithRetry', err);
+                }).catch(err => {
+                    logger.warn('Failed to send re-consent email', err);
                 });
             }
 
-            // For 'local' mode, we just pass the name back
             onAccepted(fullName.trim());
         } catch (err: unknown) {
             console.error('Error accepting terms:', err);
@@ -167,144 +143,263 @@ export function LegalConsentModal({ onAccepted, mode = 'authenticated' }: LegalC
         }
     };
 
+    // Show loading state while fetching profile
+    if (isLoading) {
+        return (
+            <div style={{
+                position: 'fixed',
+                top: 0,
+                left: 0,
+                right: 0,
+                bottom: 0,
+                backgroundColor: 'rgba(5, 5, 15, 0.95)',
+                backdropFilter: 'blur(10px)',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                zIndex: 10000
+            }}>
+                <div style={{
+                    color: '#fff',
+                    fontSize: '1rem',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '0.75rem'
+                }}>
+                    <div style={{
+                        width: '20px',
+                        height: '20px',
+                        border: '2px solid rgba(0, 240, 255, 0.3)',
+                        borderTopColor: '#00f0ff',
+                        borderRadius: '50%',
+                        animation: 'spin 1s linear infinite'
+                    }} />
+                    Laddar...
+                </div>
+                <style>{`
+                    @keyframes spin { to { transform: rotate(360deg); } }
+                `}</style>
+            </div>
+        );
+    }
+
     return (
-        <div
-            className="overflow-hidden transition-all duration-300 ease-out"
-            style={{
-                maxHeight: '0px',
-                opacity: 0,
-                animation: 'slideDown 300ms ease-out forwards'
-            }}
-        >
+        <div style={{
+            position: 'fixed',
+            top: 0,
+            left: 0,
+            right: 0,
+            bottom: 0,
+            backgroundColor: 'rgba(5, 5, 15, 0.95)',
+            backdropFilter: 'blur(10px)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            zIndex: 10000,
+            padding: '1rem',
+            animation: 'fadeIn 0.3s ease-out'
+        }}>
             <style>{`
-                @keyframes slideDown {
-                    from {
-                        max-height: 0px;
-                        opacity: 0;
-                        transform: translateY(-10px);
-                    }
-                    to {
-                        max-height: 400px;
-                        opacity: 1;
-                        transform: translateY(0);
-                    }
+                @keyframes fadeIn {
+                    from { opacity: 0; }
+                    to { opacity: 1; }
                 }
                 @keyframes slideUp {
-                    from {
-                        max-height: 400px;
-                        opacity: 1;
-                        transform: translateY(0);
-                    }
-                    to {
-                        max-height: 0px;
-                        opacity: 0;
-                        transform: translateY(-10px);
-                    }
+                    from { opacity: 0; transform: translateY(20px); }
+                    to { opacity: 1; transform: translateY(0); }
+                }
+                @keyframes spin {
+                    to { transform: rotate(360deg); }
                 }
             `}</style>
 
+            {/* Modal Card */}
             <div style={{
-                marginTop: '1.5rem',
-                paddingTop: '1.5rem',
-                borderTop: '1px solid var(--glass-border)'
+                background: 'linear-gradient(135deg, rgba(20, 20, 35, 0.98), rgba(15, 15, 25, 0.98))',
+                border: '1px solid rgba(0, 240, 255, 0.15)',
+                borderRadius: '20px',
+                padding: '2rem',
+                width: '100%',
+                maxWidth: '440px',
+                boxShadow: '0 25px 80px -12px rgba(0, 0, 0, 0.8), 0 0 40px rgba(0, 240, 255, 0.05)',
+                animation: 'slideUp 0.4s ease-out'
             }}>
-                {isReconsent && (
-                    <div
-                        className="message-box"
-                        style={{
-                            marginBottom: '1rem',
-                            padding: '0.9rem',
-                            borderRadius: '10px',
-                            background: 'rgba(255, 255, 255, 0.05)',
-                            border: '1px solid var(--glass-border)',
-                            color: 'var(--text-secondary)',
-                            fontSize: '0.85rem',
-                            lineHeight: '1.5'
-                        }}
-                    >
-                        <div style={{ marginBottom: majorChanges.length > 0 ? '0.5rem' : 0 }}>
-                            Våra villkor har uppdaterats till version <strong>{CURRENT_TERMS_VERSION}</strong>.
-                            <br />
-                            Du behöver godkänna de nya villkoren för att fortsätta.
-                        </div>
-                        {majorChanges.length > 0 && (
-                            <ul style={{ margin: 0, paddingLeft: '1.1rem' }}>
-                                {majorChanges.map((change) => (
-                                    <li key={change}>{change}</li>
-                                ))}
-                            </ul>
-                        )}
+                {/* Logo/Title */}
+                <div style={{
+                    textAlign: 'center',
+                    marginBottom: '1.5rem'
+                }}>
+                    <h1 style={{
+                        margin: 0,
+                        fontSize: '2rem',
+                        fontWeight: '700',
+                        background: 'linear-gradient(135deg, #00f0ff, #00c8ff)',
+                        WebkitBackgroundClip: 'text',
+                        WebkitTextFillColor: 'transparent',
+                        backgroundClip: 'text'
+                    }}>
+                        Britta
+                    </h1>
+                    <p style={{
+                        margin: '0.5rem 0 0 0',
+                        fontSize: '0.9rem',
+                        color: 'rgba(255, 255, 255, 0.6)'
+                    }}>
+                        Din AI-bokföringsassistent
+                    </p>
+                </div>
+
+                {/* Update Notice */}
+                <div style={{
+                    marginBottom: '1.5rem',
+                    padding: '1rem 1.25rem',
+                    borderRadius: '12px',
+                    background: 'rgba(0, 240, 255, 0.06)',
+                    border: '1px solid rgba(0, 240, 255, 0.15)'
+                }}>
+                    <div style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '0.5rem',
+                        marginBottom: '0.75rem',
+                        fontWeight: '600',
+                        color: '#00f0ff',
+                        fontSize: '0.95rem'
+                    }}>
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                            <path d="M12 22c5.523 0 10-4.477 10-10S17.523 2 12 2 2 6.477 2 12s4.477 10 10 10z"/>
+                            <path d="M12 6v6l4 2"/>
+                        </svg>
+                        Uppdaterade villkor (v{CURRENT_TERMS_VERSION})
                     </div>
-                )}
-                {/* Name Input */}
-                <div className="input-group" style={{ textAlign: 'left' }}>
-                    <label htmlFor="fullName" style={{ marginLeft: '0.25rem', display: 'block', color: 'var(--text-secondary)', fontSize: '0.85rem', marginBottom: '0.5rem', fontWeight: '500' }}>
-                        <span className="text-gradient-primary" style={{ fontSize: '0.9rem' }}>
-                            {isProfileCompletion ? '👋 Välkommen till Britta!' : '✨ Ett sista steg!'}
-                        </span><br />
-                        {isProfileCompletion ? 'Vad får vi lov att kalla dig?' : 'Ditt fullständiga namn'}
-                    </label>
-                    <input
-                        type="text"
-                        id="fullName"
-                        value={fullName}
-                        onInput={(e) => setFullName((e.target as HTMLInputElement).value)}
-                        onBlur={() => setTouched(true)}
-                        placeholder="T.ex. Anna Andersson"
-                        className="input-glass"
-                        style={{ marginBottom: touched && !isValid ? '0.5rem' : '0' }}
-                        autoFocus
-                    />
-                    {touched && !isValid && (
-                        <p style={{ color: 'var(--accent-tertiary)', fontSize: '0.75rem', marginTop: '0.5rem', display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
-                            <span>⚠️</span> Vänligen ange ditt namn.
-                        </p>
+                    <p style={{
+                        margin: 0,
+                        fontSize: '0.875rem',
+                        color: 'rgba(255, 255, 255, 0.75)',
+                        lineHeight: '1.5'
+                    }}>
+                        Vi har uppdaterat våra användarvillkor. Granska ändringarna och godkänn för att fortsätta.
+                    </p>
+
+                    {majorChanges.length > 0 && (
+                        <ul style={{
+                            margin: '0.75rem 0 0 0',
+                            paddingLeft: '1.25rem',
+                            fontSize: '0.85rem',
+                            color: 'rgba(255, 255, 255, 0.65)',
+                            lineHeight: '1.6'
+                        }}>
+                            {majorChanges.map((change, index) => (
+                                <li key={index} style={{ marginBottom: '0.25rem' }}>{change}</li>
+                            ))}
+                        </ul>
                     )}
                 </div>
 
-                {/* Continue Button */}
+                {/* User Info */}
+                {fullName && (
+                    <div style={{
+                        marginBottom: '1.5rem',
+                        padding: '0.875rem 1rem',
+                        background: 'rgba(255, 255, 255, 0.03)',
+                        borderRadius: '10px',
+                        border: '1px solid rgba(255, 255, 255, 0.08)'
+                    }}>
+                        <div style={{
+                            fontSize: '0.75rem',
+                            color: 'rgba(255, 255, 255, 0.5)',
+                            marginBottom: '0.25rem',
+                            textTransform: 'uppercase',
+                            letterSpacing: '0.5px'
+                        }}>
+                            Inloggad som
+                        </div>
+                        <div style={{
+                            fontWeight: '500',
+                            color: '#fff',
+                            fontSize: '1rem'
+                        }}>
+                            {fullName}
+                        </div>
+                    </div>
+                )}
+
+                {/* Accept Button */}
                 <button
                     onClick={handleAccept}
                     disabled={isAccepting || !isValid}
-                    className="btn btn-glow"
                     style={{
                         width: '100%',
-                        background: 'var(--accent-primary)',
-                        color: 'black',
+                        background: isAccepting || !isValid
+                            ? 'rgba(0, 240, 255, 0.3)'
+                            : 'linear-gradient(135deg, #00f0ff, #00c8ff)',
+                        color: isAccepting || !isValid ? 'rgba(0, 0, 0, 0.5)' : '#000',
                         borderRadius: '12px',
-                        marginTop: '1rem',
-                        opacity: !isValid ? 0.5 : 1,
-                        cursor: !isValid ? 'not-allowed' : 'pointer'
+                        fontWeight: '600',
+                        padding: '1rem 1.5rem',
+                        border: 'none',
+                        cursor: isAccepting || !isValid ? 'not-allowed' : 'pointer',
+                        fontSize: '1rem',
+                        transition: 'all 0.2s ease',
+                        boxShadow: isAccepting || !isValid ? 'none' : '0 4px 20px rgba(0, 240, 255, 0.3)'
                     }}
                 >
                     {isAccepting ? (
-                        <div className="flex items-center justify-center gap-2">
-                            <div className="w-4 h-4 border-2 border-black/30 border-t-black rounded-full animate-spin"></div>
-                            <span>Bearbetar...</span>
-                        </div>
+                        <span style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.5rem' }}>
+                            <span style={{
+                                width: '18px',
+                                height: '18px',
+                                border: '2px solid rgba(0,0,0,0.2)',
+                                borderTopColor: '#000',
+                                borderRadius: '50%',
+                                animation: 'spin 1s linear infinite',
+                                display: 'inline-block'
+                            }} />
+                            Godkänner...
+                        </span>
                     ) : (
-                        isProfileCompletion ? 'Spara & Börja' : 'Fortsätt'
+                        'Godkänn & Fortsätt'
                     )}
                 </button>
 
-                {/* Terms Text */}
+                {/* Terms Links */}
                 <p style={{
-                    marginTop: '1rem',
-                    fontSize: '0.75rem',
-                    color: 'var(--text-secondary)',
+                    marginTop: '1.25rem',
+                    fontSize: '0.8rem',
+                    color: 'rgba(255, 255, 255, 0.5)',
                     textAlign: 'center',
-                    opacity: 0.7,
-                    lineHeight: '1.4'
+                    lineHeight: '1.6'
                 }}>
-                    {isProfileCompletion ? (
-                        <span>Du godkände <a href="/terms.html" target="_blank" style={{ color: 'inherit', textDecoration: 'underline' }}>villkoren</a> vid inloggning.</span>
-                    ) : (
-                        <span>Genom att fortsätta godkänner du våra <a href="/terms.html" target="_blank" style={{ color: 'inherit', textDecoration: 'underline' }}>villkor</a> och <a href="/privacy.html" target="_blank" style={{ color: 'inherit', textDecoration: 'underline' }}>integritetspolicy</a>.</span>
-                    )}
+                    Läs fullständiga{' '}
+                    <a
+                        href="/terms.html"
+                        target="_blank"
+                        style={{ color: '#00f0ff', textDecoration: 'underline' }}
+                    >
+                        användarvillkor
+                    </a>
+                    {' '}och{' '}
+                    <a
+                        href="/privacy.html"
+                        target="_blank"
+                        style={{ color: '#00f0ff', textDecoration: 'underline' }}
+                    >
+                        integritetspolicy
+                    </a>
                 </p>
 
+                {/* Error Message */}
                 {error && (
-                    <div className="message-box error" style={{ marginTop: '1rem' }}>
+                    <div style={{
+                        marginTop: '1rem',
+                        padding: '0.875rem 1rem',
+                        background: 'rgba(255, 68, 68, 0.1)',
+                        border: '1px solid rgba(255, 68, 68, 0.25)',
+                        borderRadius: '10px',
+                        color: '#ff6b6b',
+                        fontSize: '0.9rem',
+                        textAlign: 'center'
+                    }}>
                         {error}
                     </div>
                 )}

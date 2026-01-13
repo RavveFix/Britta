@@ -81,6 +81,9 @@ Text → gemini-chat → Gemini AI
 
 ## Environment Variables
 
+### Supabase Project
+- **Project ID**: `baweorbvueghhkzlyncu` (use this for all MCP tool calls)
+
 ### Supabase Secrets
 ```bash
 supabase secrets set GEMINI_API_KEY=...

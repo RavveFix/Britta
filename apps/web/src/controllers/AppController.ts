@@ -7,6 +7,7 @@
 
 import { supabase } from '../lib/supabase';
 import { mountPreactComponent } from '../components/preact-adapter';
+import { mountModal } from '../utils/modalHelpers';
 import { LegalConsentModal } from '../components/LegalConsentModal';
 import { SettingsModal } from '../components/SettingsModal';
 import { IntegrationsModal } from '../components/IntegrationsModal';
@@ -14,7 +15,6 @@ import { ConversationList } from '../components/Chat/ConversationList';
 import { ExcelWorkspace } from '../components/ExcelWorkspace';
 import { MemoryIndicator } from '../components/MemoryIndicator';
 import { ConversationSearch } from '../components/ConversationSearch';
-import { mountModal } from '../utils/modalHelpers';
 import { initKeyboardShortcuts } from '../hooks/useKeyboardShortcuts';
 
 // Services
@@ -119,41 +119,106 @@ export class AppController {
         const hasAccepted = await authService.hasAcceptedTerms();
 
         if (!hasAccepted) {
-            // Check for local consent (from login page)
+            // First, check if this is a re-consent scenario (existing user with outdated version)
+            // This takes priority over local consent from login page
+            const needsReconsent = await this.checkNeedsReconsent();
+
+            if (needsReconsent) {
+                // Clear any local consent - existing users must re-accept via modal
+                authService.clearLocalConsent();
+                logger.info('User needs to re-consent to updated terms');
+                return this.showReconsentModal();
+            }
+
+            // Not a re-consent scenario - check for local consent (new user from login page)
             if (authService.hasLocalConsent()) {
-                logger.info('Found local consent, syncing to DB...');
-                authService.syncLocalConsentToDatabase();
+                logger.info('Found local consent from login (new user), syncing to DB...');
+                const synced = await authService.syncLocalConsentToDatabase();
+
+                if (synced) {
+                    // Send consent confirmation email (non-blocking)
+                    this.sendConsentEmail().catch(err => {
+                        logger.warn('Failed to send consent email', err);
+                    });
+                    return true;
+                }
+
+                // Sync failed but we have local consent - allow access
+                // Will retry sync on next load
+                logger.warn('DB sync failed, but allowing access with local consent');
                 return true;
             }
 
-            logger.info('User has not accepted terms, showing modal');
-            uiController.removeLoaderImmediately();
-
-            // Create container for modal
-            let modalContainer = document.getElementById('legal-modal-container');
-            if (!modalContainer) {
-                modalContainer = document.createElement('div');
-                modalContainer.id = 'legal-modal-container';
-                document.body.appendChild(modalContainer);
-            }
-
-            // Mount the modal
-            mountPreactComponent(
-                LegalConsentModal,
-                {
-                    mode: 'authenticated' as const,
-                    onAccepted: (_fullName: string) => {
-                        logger.info('Terms accepted, redirecting to app...');
-                        authService.redirectToApp();
-                    }
-                },
-                modalContainer
-            );
-
+            // New user without any consent - should not happen with click-through flow
+            // But handle gracefully by redirecting to login
+            logger.warn('No consent found, redirecting to login');
+            authService.redirectToLogin();
             return false;
         }
 
         return true;
+    }
+
+    private async checkNeedsReconsent(): Promise<boolean> {
+        const session = await authService.getSession();
+        if (!session) return false;
+
+        try {
+            const { data: profile } = await supabase
+                .from('profiles')
+                .select('has_accepted_terms, terms_version')
+                .eq('id', session.user.id)
+                .single();
+
+            // Has accepted before but version is outdated
+            return !!profile?.has_accepted_terms && !!profile?.terms_version;
+        } catch {
+            return false;
+        }
+    }
+
+    private showReconsentModal(): boolean {
+        logger.info('Showing re-consent modal for updated terms');
+        uiController.removeLoaderImmediately();
+
+        // Use mountModal helper (same pattern as SettingsModal)
+        // LegalConsentModal now renders its own full-screen overlay
+        mountModal({
+            containerId: 'legal-consent-modal-container',
+            Component: LegalConsentModal,
+            props: {
+                mode: 'authenticated' as const,
+                onAccepted: (_fullName: string) => {
+                    logger.info('Terms re-accepted, reloading app...');
+                    window.location.reload();
+                }
+            }
+        });
+
+        logger.debug('LegalConsentModal mounted');
+
+        return false;
+    }
+
+    private async sendConsentEmail(): Promise<void> {
+        const session = await authService.getSession();
+        if (!session) return;
+
+        const consentData = authService.getLocalConsentData();
+        if (!consentData) return;
+
+        const { CURRENT_TERMS_VERSION } = await import('../constants/termsVersion');
+
+        logger.debug('Sending consent confirmation email');
+        await supabase.functions.invoke('send-consent-email', {
+            body: {
+                userId: session.user.id,
+                email: session.user.email,
+                fullName: consentData.fullName,
+                termsVersion: CURRENT_TERMS_VERSION,
+                acceptedAt: consentData.acceptedAt
+            }
+        });
     }
 
     private setupAuthListener(): void {

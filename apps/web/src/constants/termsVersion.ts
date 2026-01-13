@@ -8,7 +8,7 @@
  * When version changes, ALL users will be prompted to re-consent on next login.
  */
 
-export const CURRENT_TERMS_VERSION = '1.1.0';
+export const CURRENT_TERMS_VERSION = '1.2.0';
 
 /**
  * Version history and change summaries
@@ -19,6 +19,16 @@ export const VERSION_HISTORY: Record<string, {
     summary: string;
     majorChanges: string[];
 }> = {
+    '1.2.0': {
+        date: '2026-01-13',
+        summary: 'Komplett företagsinformation och GDPR-förbättringar',
+        majorChanges: [
+            'Lagt till fullständig företagsinformation (Fixverse AB)',
+            'Tydliga lagringstider för alla datatyper',
+            'Information om hur du klagar till IMY',
+            'Cookie-policy och lokal lagring'
+        ]
+    },
     '1.1.0': {
         date: '2026-01-07',
         summary: 'Uppdatering för AI Act och förtydligat ansvar',
