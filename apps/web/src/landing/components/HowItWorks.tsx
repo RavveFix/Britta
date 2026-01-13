@@ -63,7 +63,7 @@ export function HowItWorks() {
     };
 
     return (
-        <section class="how-it-works-section">
+        <section id="how-it-works" class="how-it-works-section">
             <div class="container">
                 <div class="section-header fade-in-up">
                     <h2>Så fungerar Britta</h2>

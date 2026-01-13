@@ -25,6 +25,18 @@ export function App() {
                         Britta
                     </div>
                     <div style="display: flex; align-items: center; gap: 1.5rem;">
+                        <a href="#features" class="support-link" style="text-decoration: none; color: var(--text-secondary); font-size: 0.9rem; transition: color 0.2s ease;">
+                            Funktioner
+                        </a>
+                        <a href="#how-it-works" class="support-link" style="text-decoration: none; color: var(--text-secondary); font-size: 0.9rem; transition: color 0.2s ease;">
+                            Hur det funkar
+                        </a>
+                        <a href="#pricing" class="support-link" style="text-decoration: none; color: var(--text-secondary); font-size: 0.9rem; transition: color 0.2s ease;">
+                            Priser
+                        </a>
+                        <a href="#about" class="support-link" style="text-decoration: none; color: var(--text-secondary); font-size: 0.9rem; transition: color 0.2s ease;">
+                            Om oss
+                        </a>
                         <a href="mailto:support@britta.ai" class="support-link" style="text-decoration: none; color: var(--text-secondary); font-size: 0.9rem; transition: color 0.2s ease;">
                             Support
                         </a>

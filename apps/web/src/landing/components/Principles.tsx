@@ -1,7 +1,7 @@
 
 export function Principles() {
     return (
-        <section class="principles-section">
+        <section id="about" class="principles-section">
             <div class="container">
                 <div class="principles-header">
                     <span class="section-badge">Våra värderingar</span>
