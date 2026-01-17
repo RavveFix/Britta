@@ -21,6 +21,7 @@ export class ChatController {
     private vatReportSaveInProgress: boolean = false;
     private rateLimitActive: boolean = false;
     private rateLimitResetAt: string | null = null;
+    private conversationLoading: boolean = false;
 
     init(excelWorkspace: ExcelWorkspace): void {
         this.excelWorkspace = excelWorkspace;
@@ -31,6 +32,7 @@ export class ChatController {
         this.setupSuggestionHandlers();
         this.setupRateLimitHandlers();
         this.setupCompanyChangeHandler();
+        this.setupConversationLoadingHandler();
     }
 
     /**
@@ -82,6 +84,40 @@ export class ChatController {
             this.rateLimitResetAt = null;
             this.updateInputForRateLimit();
         });
+    }
+
+    private setupConversationLoadingHandler(): void {
+        // Listen for conversation loading start
+        window.addEventListener('conversation-loading', ((e: CustomEvent<{ loading: boolean }>) => {
+            this.conversationLoading = e.detail.loading;
+            this.updateInputForConversationLoading();
+        }) as EventListener);
+
+        // Listen for messages loaded to end loading state (ChatHistory dispatches this)
+        window.addEventListener('chat-messages-loaded', (() => {
+            if (this.conversationLoading) {
+                this.conversationLoading = false;
+                this.updateInputForConversationLoading();
+            }
+        }) as EventListener);
+    }
+
+    private updateInputForConversationLoading(): void {
+        const { userInput } = uiController.elements;
+        if (!userInput) return;
+
+        if (this.conversationLoading) {
+            userInput.disabled = true;
+            userInput.placeholder = 'Laddar konversation...';
+            userInput.classList.add('loading');
+        } else if (!this.rateLimitActive) {
+            // Only re-enable if not rate limited
+            userInput.disabled = false;
+            userInput.placeholder = 'Fråga mig vad som helst...';
+            userInput.classList.remove('loading');
+            // Focus input after loading completes for better UX
+            setTimeout(() => userInput.focus(), 50);
+        }
     }
 
     private updateInputForRateLimit(): void {
@@ -225,6 +261,13 @@ export class ChatController {
 
     private async handleFormSubmit(e: SubmitEvent): Promise<void> {
         e.preventDefault();
+
+        // Block submission while conversation is loading
+        if (this.conversationLoading) {
+            logger.debug('Form submission blocked - conversation still loading');
+            return;
+        }
+
         let message = uiController.getInputValue().trim();
 
         if (!message && !this.currentFile) return;

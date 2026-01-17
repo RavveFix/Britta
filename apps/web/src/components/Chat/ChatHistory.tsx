@@ -12,7 +12,7 @@ type Message = Database['public']['Tables']['messages']['Row'];
 
 // Animated thinking text with character cascade effect
 const AnimatedThinkingText: FunctionComponent = () => {
-    const text = 'Britta tänker';
+    const text = 'Veridat tänker';
     const dots = '...';
 
     return (
@@ -68,6 +68,8 @@ export const ChatHistory: FunctionComponent<ChatHistoryProps> = ({ conversationI
     // Streaming debounce refs
     const streamingBufferRef = useRef<string>('');
     const debounceTimerRef = useRef<number | null>(null);
+    // Subscription version to prevent stale callbacks from different conversations
+    const subscriptionVersionRef = useRef<number>(0);
 
     // Date formatting helper
     const formatDateSeparator = (dateStr: string): string => {
@@ -129,6 +131,9 @@ export const ChatHistory: FunctionComponent<ChatHistoryProps> = ({ conversationI
     };
 
     useEffect(() => {
+        // Increment subscription version on every conversationId change
+        const currentVersion = ++subscriptionVersionRef.current;
+
         fetchMessages();
 
         // Silent refresh to avoid skeleton flicker
@@ -157,6 +162,11 @@ export const ChatHistory: FunctionComponent<ChatHistoryProps> = ({ conversationI
                 table: 'messages',
                 filter: `conversation_id=eq.${conversationId}`
             }, (payload) => {
+                // Ignore callbacks from stale subscriptions (user switched conversations)
+                if (currentVersion !== subscriptionVersionRef.current) {
+                    return;
+                }
+
                 // Add new message to state (avoid duplicates)
                 setMessages(prev => {
                     const newMsg = payload.new as Message;

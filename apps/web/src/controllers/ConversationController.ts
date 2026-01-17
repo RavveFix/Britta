@@ -20,6 +20,11 @@ export class ConversationController {
     private listUnmount: (() => void) | null = null;
     private isWelcomeTransitioning: boolean = false;
 
+    // Loading synchronization state
+    private isLoadingConversation: boolean = false;
+    private loadRequestId: number = 0;
+    private loadDebounceTimer: ReturnType<typeof setTimeout> | null = null;
+
     init(chatContainer: HTMLElement): void {
         this.chatContainer = chatContainer;
         this.setupEventListeners();
@@ -52,6 +57,22 @@ export class ConversationController {
     }
 
     async loadConversation(conversationId: string): Promise<void> {
+        // Clear any pending debounce timer
+        if (this.loadDebounceTimer) {
+            clearTimeout(this.loadDebounceTimer);
+            this.loadDebounceTimer = null;
+        }
+
+        // Debounce rapid clicks (50ms)
+        return new Promise((resolve) => {
+            this.loadDebounceTimer = setTimeout(() => {
+                this.loadDebounceTimer = null;
+                this.doLoadConversation(conversationId).then(resolve);
+            }, 50);
+        });
+    }
+
+    private async doLoadConversation(conversationId: string): Promise<void> {
         // SKIP if same conversation is already loaded (prevents multiple calls)
         const currentConversationId = companyManager.getConversationId();
         if (conversationId === currentConversationId) {
@@ -59,10 +80,28 @@ export class ConversationController {
             return;
         }
 
-        logger.info('Loading conversation', { conversationId });
+        // Skip if already loading a conversation
+        if (this.isLoadingConversation) {
+            logger.debug('Already loading a conversation, queueing', { conversationId });
+        }
+
+        // Increment request ID to invalidate previous loads
+        const requestId = ++this.loadRequestId;
+        this.isLoadingConversation = true;
+
+        // Dispatch loading event to coordinate input state
+        window.dispatchEvent(new CustomEvent('conversation-loading', { detail: { loading: true } }));
+
+        logger.info('Loading conversation', { conversationId, requestId });
 
         // Update local state
         companyManager.setConversationId(conversationId);
+
+        // Verify request is still valid
+        if (requestId !== this.loadRequestId) {
+            logger.debug('Request superseded, aborting', { requestId, current: this.loadRequestId });
+            return;
+        }
 
         // Update list highlight
         this.mountConversationList();
@@ -75,12 +114,23 @@ export class ConversationController {
             if (this.chatUnmount) this.chatUnmount();
             this.chatContainer.innerHTML = '';
 
+            // Final validity check before mounting
+            if (requestId !== this.loadRequestId) {
+                logger.debug('Request superseded before mount, aborting', { requestId });
+                return;
+            }
+
             this.chatUnmount = mountPreactComponent(
                 ChatHistory,
                 { conversationId: conversationId },
                 this.chatContainer
             );
         }
+
+        // NOTE: Don't dispatch loading: false here - ChatController listens for
+        // 'chat-messages-loaded' event from ChatHistory to clear loading state
+        // This ensures input stays disabled until messages are actually loaded
+        this.isLoadingConversation = false;
     }
 
     async startNewChat(): Promise<void> {
