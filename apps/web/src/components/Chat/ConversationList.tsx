@@ -20,13 +20,22 @@ interface ConversationListProps {
 // Module-level cache to persist across remounts
 const conversationCache = new Map<string, Conversation[]>();
 
+// Track pending deletions to prevent race conditions with Realtime
+const pendingDeletions = new Set<string>();
+
+// Track currently deleting conversation (module-level to survive remounts)
+let currentlyDeleting: string | null = null;
+
 export const ConversationList: FunctionComponent<ConversationListProps> = ({ currentConversationId, onSelectConversation, companyId }) => {
     const [conversations, setConversations] = useState<Conversation[]>([]);
     const [loading, setLoading] = useState(true);
     const [fetchError, setFetchError] = useState<string | null>(null);
-    const [deletingId, setDeletingId] = useState<string | null>(null);
     const [showConfirmModal, setShowConfirmModal] = useState<string | null>(null);
     const [toast, setToast] = useState<{ message: string, type: 'success' | 'error' } | null>(null);
+
+    // Force re-render when deletion state changes (since currentlyDeleting is module-level)
+    const [, forceUpdate] = useState({});
+    const triggerUpdate = () => forceUpdate({});
 
     // Track active company - updates live when company changes
     const [activeCompanyId, setActiveCompanyId] = useState<string | null>(companyId);
@@ -70,6 +79,14 @@ export const ConversationList: FunctionComponent<ConversationListProps> = ({ cur
                     // Filter by company_id in callback since Supabase only supports single filter
                     const newCompanyId = (payload.new as { company_id?: string })?.company_id;
                     const oldCompanyId = (payload.old as { company_id?: string })?.company_id;
+
+                    // Ignore DELETE events for our own pending deletions to prevent race condition
+                    if (payload.eventType === 'DELETE') {
+                        const deletedId = (payload.old as { id?: string })?.id;
+                        if (deletedId && pendingDeletions.has(deletedId)) {
+                            return; // Skip - this is our own deletion, UI already updated
+                        }
+                    }
 
                     // Re-fetch if the change is for current company or if no company filter
                     if (!activeCompanyId || newCompanyId === activeCompanyId || oldCompanyId === activeCompanyId) {
@@ -223,8 +240,32 @@ export const ConversationList: FunctionComponent<ConversationListProps> = ({ cur
         if (!showConfirmModal) return;
 
         const id = showConfirmModal;
-        setDeletingId(id);
+
+        // Double-click protection: check both UI state and pending set
+        if (currentlyDeleting === id || pendingDeletions.has(id)) {
+            return;
+        }
+
+        // Mark as pending BEFORE any async work
+        pendingDeletions.add(id);
+        currentlyDeleting = id;
+        triggerUpdate();
         setShowConfirmModal(null); // Close modal immediately, show loading on item
+
+        // Optimistic removal - update UI BEFORE API call for instant feedback
+        const previousConversations = conversations;
+        setConversations(prev => {
+            const updated = prev.filter(c => c.id !== id);
+            const cacheKey = activeCompanyId || 'all';
+            conversationCache.set(cacheKey, updated);
+            return updated;
+        });
+
+        // If deleted conversation was active, dispatch event and create new one immediately
+        if (id === currentConversationId) {
+            window.dispatchEvent(new CustomEvent('conversation-deleted', { detail: { id } }));
+            window.dispatchEvent(new CustomEvent('create-new-conversation'));
+        }
 
         try {
             const { error } = await supabase
@@ -235,27 +276,30 @@ export const ConversationList: FunctionComponent<ConversationListProps> = ({ cur
             if (error) throw error;
 
             showToast('Konversationen raderades', 'success');
-
-            // Update local state and cache
-            setConversations(prev => {
-                const updated = prev.filter(c => c.id !== id);
-                // Also update cache
-                const cacheKey = activeCompanyId || 'all';
-                conversationCache.set(cacheKey, updated);
-                return updated;
-            });
-
-            // If deleted conversation was active, dispatch event and create new one
-            if (id === currentConversationId) {
-                window.dispatchEvent(new CustomEvent('conversation-deleted', { detail: { id } }));
-                // Trigger new conversation creation
-                window.dispatchEvent(new CustomEvent('create-new-conversation'));
-            }
         } catch (error) {
             console.error('Error deleting conversation:', error);
             showToast('Kunde inte ta bort konversationen', 'error');
+
+            // Rollback: restore previous state on error - reset ALL state immediately
+            pendingDeletions.delete(id);
+            currentlyDeleting = null;
+            triggerUpdate();
+            setConversations(previousConversations);
+            const cacheKey = activeCompanyId || 'all';
+            conversationCache.set(cacheKey, previousConversations);
+            fetchConversations(true); // Force refresh to sync with server
         } finally {
-            setDeletingId(null);
+            // Delay cleanup to ensure Realtime callback has time to fire and be filtered
+            // Only cleanup if not already done in catch block
+            setTimeout(() => {
+                if (pendingDeletions.has(id)) {
+                    pendingDeletions.delete(id);
+                }
+                if (currentlyDeleting === id) {
+                    currentlyDeleting = null;
+                    triggerUpdate();
+                }
+            }, 500);
         }
     };
 
@@ -310,7 +354,8 @@ export const ConversationList: FunctionComponent<ConversationListProps> = ({ cur
                             <div class="conversation-group-title">{label}</div>
                             {items.map((conv) => {
                                 const isActive = conv.id === currentConversationId;
-                                const isDeleting = deletingId === conv.id;
+                                // Check both module-level states to ensure button disabled state is always correct
+                                const isDeleting = currentlyDeleting === conv.id || pendingDeletions.has(conv.id);
                                 return (
                                     <div
                                         key={conv.id}
