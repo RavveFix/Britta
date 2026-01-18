@@ -14,7 +14,7 @@ import { IntegrationsModal } from '../components/IntegrationsModal';
 import { ConversationList } from '../components/Chat/ConversationList';
 import { ExcelWorkspace } from '../components/ExcelWorkspace';
 import { MemoryIndicator } from '../components/MemoryIndicator';
-import { ConversationSearch } from '../components/ConversationSearch';
+import { SearchModalWrapper } from '../components/SearchModal';
 import { initKeyboardShortcuts } from '../hooks/useKeyboardShortcuts';
 
 // Services
@@ -30,6 +30,7 @@ import { sidebarController } from './SidebarController';
 import { companyModalController } from './CompanyModalController';
 import { conversationController } from './ConversationController';
 import { chatController } from './ChatController';
+import { modelSelectorController } from './ModelSelectorController';
 
 export class AppController {
     private excelWorkspace: ExcelWorkspace | null = null;
@@ -284,19 +285,35 @@ export class AppController {
             chatController.init(this.excelWorkspace);
         }
 
+        // Model selector controller
+        modelSelectorController.init();
+
         this.mountMemoryComponents();
     }
 
     private mountMemoryComponents(): void {
-        const searchRoot = document.getElementById('conversation-search-root');
-        if (searchRoot) {
-            mountPreactComponent(ConversationSearch, {}, searchRoot);
-        }
-
         const memoryRoot = document.getElementById('memory-indicator-root');
         if (memoryRoot) {
             mountPreactComponent(MemoryIndicator, {}, memoryRoot);
         }
+
+        // Mount global search modal
+        this.mountSearchModal();
+
+        // Setup search button click handler
+        const searchBtn = document.getElementById('search-btn');
+        if (searchBtn) {
+            searchBtn.addEventListener('click', () => {
+                window.dispatchEvent(new CustomEvent('open-search-modal'));
+            });
+        }
+    }
+
+    private mountSearchModal(): void {
+        const container = document.getElementById('search-modal-container');
+        if (!container) return;
+
+        mountPreactComponent(SearchModalWrapper, {}, container);
     }
 
     private setupSettingsButton(): void {
@@ -378,7 +395,7 @@ export class AppController {
         const contactBtn = document.getElementById('contact-btn');
         if (contactBtn) {
             contactBtn.addEventListener('click', () => {
-                window.location.href = 'mailto:hej@britta.se?subject=Uppgradera%20till%20Pro&body=Hej%2C%0A%0AJag%20skulle%20vilja%20uppgradera%20till%20Pro-versionen.%0A%0AMvh';
+                window.location.href = 'mailto:hej@veridat.se?subject=Uppgradera%20till%20Pro&body=Hej%2C%0A%0AJag%20skulle%20vilja%20uppgradera%20till%20Pro-versionen.%0A%0AMvh';
             });
         }
     }

@@ -304,6 +304,16 @@ export const ChatHistory: FunctionComponent<ChatHistoryProps> = ({ conversationI
         };
     }, []);
 
+    // Handle show-upgrade-modal event (from ModelSelectorController when clicking locked Pro)
+    useEffect(() => {
+        const handleShowUpgradeModal = () => {
+            setShowUpgradeModal(true);
+        };
+
+        window.addEventListener('show-upgrade-modal', handleShowUpgradeModal as EventListener);
+        return () => window.removeEventListener('show-upgrade-modal', handleShowUpgradeModal as EventListener);
+    }, []);
+
     // Clear optimistic messages when real messages are fetched (must be before conditional returns)
     useEffect(() => {
         if (messages.length > 0) {
